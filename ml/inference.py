@@ -23,11 +23,15 @@ To convert a trained PyTorch checkpoint to ONNX call the static helper::
 
     ExoNetInference.export_from_pytorch("exonet.pt", "exonet.onnx")
 
-The resulting ONNX graph has two named inputs:
-  - ``global_view``  — float32 tensor, shape (N, 1, 2001)
-  - ``local_view``   — float32 tensor, shape (N, 1, 201)
+The resulting ONNX graph has three named inputs:
+  - ``global_view``     — float32 tensor, shape (N, 1, 2001)
+  - ``local_view``      — float32 tensor, shape (N, 1, 201)
+  - ``scalar_features`` — float32 tensor, shape (N, 4)
+                          raw values [period_days, duration_days,
+                          depth_fractional, bls_power]; log1p normalisation
+                          is applied inside the model graph
 and one output:
-  - ``score``        — float32 tensor, shape (N, 1)
+  - ``score``           — float32 tensor, shape (N, 1)
 """
 
 from __future__ import annotations
@@ -92,8 +96,9 @@ class ExoNetInference:
         ----------
         candidate :
             A ``TransitCandidate`` produced by ``ml.preprocess.preprocess``.
-            Its ``global_view`` (shape 2001) and ``local_view`` (shape 201)
-            are used as model inputs.
+            Its ``global_view`` (shape 2001), ``local_view`` (shape 201), and
+            scalar attributes ``period``, ``duration``, ``depth``, and
+            ``bls_power`` are used as model inputs.
 
         Returns
         -------
@@ -102,12 +107,17 @@ class ExoNetInference:
         """
         global_arr = candidate.global_view.astype(np.float32).reshape(1, 1, 2001)
         local_arr  = candidate.local_view.astype(np.float32).reshape(1, 1, 201)
+        scalar_arr = np.array(
+            [candidate.period, candidate.duration, candidate.depth, candidate.bls_power],
+            dtype=np.float32,
+        ).reshape(1, 4)
 
         outputs = self._session.run(
             None,
             {
-                "global_view": global_arr,
-                "local_view":  local_arr,
+                "global_view":     global_arr,
+                "local_view":      local_arr,
+                "scalar_features": scalar_arr,
             },
         )
         # outputs[0] has shape (1, 1); extract scalar
@@ -146,11 +156,22 @@ class ExoNetInference:
             [c.local_view.astype(np.float32) for c in candidates]
         ).reshape(-1, 1, 201)   # (N, 1, 201)
 
+        scalar_arr = np.stack(
+            [
+                np.array(
+                    [c.period, c.duration, c.depth, c.bls_power],
+                    dtype=np.float32,
+                )
+                for c in candidates
+            ]
+        )  # (N, 4)
+
         outputs = self._session.run(
             None,
             {
-                "global_view": global_arr,
-                "local_view":  local_arr,
+                "global_view":     global_arr,
+                "local_view":      local_arr,
+                "scalar_features": scalar_arr,
             },
         )
         # outputs[0] has shape (N, 1)
@@ -180,9 +201,11 @@ class ExoNetInference:
 
         Notes
         -----
-        The export uses ``opset_version=17`` and sets both inputs
-        (``global_view``, ``local_view``) and the output (``score``) as
-        dynamic-batch axes so the ONNX graph accepts any batch size.
+        The export uses ``opset_version=18`` and sets all three inputs
+        (``global_view``, ``local_view``, ``scalar_features``) and the output
+        (``score``) as dynamic-batch axes so the ONNX graph accepts any batch
+        size.  The ``scalar_features`` input carries raw values; log1p
+        normalisation is baked into the exported graph via ``ScalarBranch``.
         """
         import torch  # noqa: PLC0415  (deferred import intentional)
         from ml.model import ExoNet  # noqa: PLC0415
@@ -197,20 +220,22 @@ class ExoNetInference:
         model.eval()
 
         # Dummy inputs for tracing — batch size 1
-        dummy_global = torch.zeros(1, 1, 2001, dtype=torch.float32)
-        dummy_local  = torch.zeros(1, 1, 201,  dtype=torch.float32)
+        dummy_global  = torch.zeros(1, 1, 2001, dtype=torch.float32)
+        dummy_local   = torch.zeros(1, 1, 201,  dtype=torch.float32)
+        dummy_scalar  = torch.zeros(1, 4,        dtype=torch.float32)
 
         torch.onnx.export(
             model,
-            (dummy_global, dummy_local),
+            (dummy_global, dummy_local, dummy_scalar),
             str(onnx_path),
-            opset_version=17,
-            input_names=["global_view", "local_view"],
+            opset_version=18,
+            input_names=["global_view", "local_view", "scalar_features"],
             output_names=["score"],
             dynamic_axes={
-                "global_view": {0: "batch_size"},
-                "local_view":  {0: "batch_size"},
-                "score":       {0: "batch_size"},
+                "global_view":     {0: "batch_size"},
+                "local_view":      {0: "batch_size"},
+                "scalar_features": {0: "batch_size"},
+                "score":           {0: "batch_size"},
             },
         )
         print(f"Exported ONNX model to {onnx_path}")

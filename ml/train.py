@@ -1,23 +1,25 @@
 """
 ExoNet training script.
 
-Downloads Kepler KOI labels from the NASA Exoplanet Archive, fetches the
-corresponding FITS light curves via astroquery.mast, preprocesses each light
-curve with the Lumina pipeline, trains ExoNet with binary cross-entropy loss,
-and exports the best checkpoint to ONNX.
+Downloads labels from the NASA Exoplanet Archive for Kepler KOIs, TESS TOIs,
+and K2 candidates, fetches the corresponding FITS light curves via
+astroquery.mast, preprocesses each light curve with the Lumina pipeline,
+trains ExoNet with binary cross-entropy loss, and exports the best checkpoint
+to ONNX.
 
 Quick start
 -----------
 ::
 
     python -m ml.train \\
-        --fits-dir  /data/kepler_fits \\
+        --fits-dir  /data/fits_cache \\
         --output-dir /data/exonet_run \\
-        --epochs 30 --batch-size 64
+        --epochs 50 --batch-size 64
 
 The script saves:
-  ``<output_dir>/exonet.pt``    — best PyTorch state dict (by val AUC-ROC)
-  ``<output_dir>/exonet.onnx``  — ONNX export of the best checkpoint
+  ``<output_dir>/exonet.pt``        — best PyTorch state dict (by val AUC-ROC)
+  ``<output_dir>/exonet.onnx``      — ONNX export of the best checkpoint
+  ``<output_dir>/threshold.json``   — optimal classification threshold (val F1)
 
 Dependencies (developer machine only)
 --------------------------------------
@@ -27,7 +29,9 @@ Dependencies (developer machine only)
 from __future__ import annotations
 
 import argparse
+import csv
 import io
+import json
 import os
 import sys
 import warnings
@@ -41,13 +45,14 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
     except Exception:
         pass
+
 from pathlib import Path
 
 import numpy as np
 import requests
 import torch
 import torch.nn as nn
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import f1_score, roc_auc_score
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset, Subset
 
@@ -55,35 +60,55 @@ from ml.inference import ExoNetInference
 from ml.model import GLOBAL_LEN, LOCAL_LEN, ExoNet
 from ml.preprocess import preprocess
 
-# ── Dataset constants ─────────────────────────────────────────────────────────
+# ── TAP URLs ──────────────────────────────────────────────────────────────────
 
 _KOI_TAP_URL = (
     "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
     "?query=select+kepid,koi_disposition+from+cumulative&format=csv"
 )
-
-_CONFIRMED_LABELS = {"CONFIRMED", "CANDIDATE"}   # → 1.0
-_FP_LABEL         = "FALSE POSITIVE"              # → 0.0
+_TOI_TAP_URL = (
+    "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
+    "?query=select+tid,tfopwg_disp+from+toi&format=csv"
+)
+_K2_TAP_URL = (
+    "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
+    "?query=select+epic_name,disp+from+k2candidates&format=csv"
+)
 
 
 # ── Label helpers ─────────────────────────────────────────────────────────────
 
-def _disposition_to_label(disposition: str) -> float | None:
-    """
-    Map a KOI disposition string to a binary label.
-
-    Returns ``None`` for unknown/ambiguous dispositions so those rows can be
-    skipped cleanly.
-    """
+def _koi_disposition_to_label(disposition: str) -> float | None:
+    """Map a Kepler KOI disposition string to a binary label."""
     d = disposition.strip().upper()
-    if d in _CONFIRMED_LABELS:
+    if d in {"CONFIRMED", "CANDIDATE"}:
         return 1.0
-    if d == _FP_LABEL.upper():
+    if d == "FALSE POSITIVE":
         return 0.0
     return None
 
 
-# ── KOI CSV download ──────────────────────────────────────────────────────────
+def _tess_disposition_to_label(disposition: str) -> float | None:
+    """Map a TESS TFOPWG disposition string to a binary label."""
+    d = disposition.strip().upper()
+    if d in {"CP", "PC"}:
+        return 1.0
+    if d in {"FP", "FA"}:
+        return 0.0
+    return None
+
+
+def _k2_disposition_to_label(disposition: str) -> float | None:
+    """Map a K2 candidate disposition string to a binary label."""
+    d = disposition.strip().upper()
+    if d in {"CONFIRMED", "CANDIDATE"}:
+        return 1.0
+    if d == "FALSE POSITIVE":
+        return 0.0
+    return None
+
+
+# ── CSV download functions ────────────────────────────────────────────────────
 
 def download_koi_table() -> list[tuple[int, float]]:
     """
@@ -93,7 +118,7 @@ def download_koi_table() -> list[tuple[int, float]]:
     -------
     list of (kepid, label) tuples where label is 0.0 or 1.0.
     """
-    print("Downloading KOI table from NASA Exoplanet Archive …")
+    print("Downloading Kepler KOI table from NASA Exoplanet Archive ...")
     try:
         response = requests.get(_KOI_TAP_URL, timeout=120)
         response.raise_for_status()
@@ -103,14 +128,9 @@ def download_koi_table() -> list[tuple[int, float]]:
     if not response.text.strip():
         raise RuntimeError("KOI table response was empty.")
 
-    # Use csv.DictReader to handle quoted fields (e.g. "FALSE POSITIVE")
-    import csv as _csv
-    import io as _io
-    reader = _csv.DictReader(_io.StringIO(response.text))
+    reader = csv.DictReader(io.StringIO(response.text))
     if reader.fieldnames is None or "kepid" not in reader.fieldnames or "koi_disposition" not in reader.fieldnames:
-        raise RuntimeError(
-            f"Unexpected KOI table columns: {reader.fieldnames}"
-        )
+        raise RuntimeError(f"Unexpected KOI table columns: {reader.fieldnames}")
 
     records: list[tuple[int, float]] = []
     for row in reader:
@@ -118,33 +138,111 @@ def download_koi_table() -> list[tuple[int, float]]:
             kepid = int(row["kepid"].strip())
         except (ValueError, KeyError):
             continue
-        label = _disposition_to_label(row.get("koi_disposition", ""))
+        label = _koi_disposition_to_label(row.get("koi_disposition", ""))
         if label is not None:
             records.append((kepid, label))
 
-    print(f"  {len(records)} labelled KOIs loaded "
-          f"({sum(1 for _, l in records if l == 1.0)} positives, "
-          f"{sum(1 for _, l in records if l == 0.0)} negatives).")
+    n_pos = sum(1 for _, l in records if l == 1.0)
+    n_neg = sum(1 for _, l in records if l == 0.0)
+    print(f"  Kepler: {len(records)} labelled KOIs ({n_pos} positives, {n_neg} negatives).")
     return records
 
 
-# ── FITS download via astroquery ──────────────────────────────────────────────
+def download_toi_table() -> list[tuple[int, float]]:
+    """
+    Fetch the TESS TOI table from NASA Exoplanet Archive via TAP.
 
-def _fits_cache_path(fits_dir: Path, kepid: int) -> Path | None:
-    """Return the path to a cached FITS file for ``kepid``, or None if absent."""
-    # Accept any FITS file whose name contains the zero-padded kepid
-    padded = str(kepid).zfill(9)
-    matches = list(fits_dir.glob(f"*{padded}*.fits"))
+    Returns
+    -------
+    list of (tid, label) tuples where label is 0.0 or 1.0.
+    """
+    print("Downloading TESS TOI table from NASA Exoplanet Archive ...")
+    try:
+        response = requests.get(_TOI_TAP_URL, timeout=120)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"  WARNING: Failed to download TESS TOI table: {exc}. Skipping.")
+        return []
+
+    if not response.text.strip():
+        print("  WARNING: TESS TOI table response was empty. Skipping.")
+        return []
+
+    reader = csv.DictReader(io.StringIO(response.text))
+    if reader.fieldnames is None or "tid" not in reader.fieldnames or "tfopwg_disp" not in reader.fieldnames:
+        print(f"  WARNING: Unexpected TESS TOI columns: {reader.fieldnames}. Skipping.")
+        return []
+
+    records: list[tuple[int, float]] = []
+    for row in reader:
+        try:
+            tid = int(row["tid"].strip())
+        except (ValueError, KeyError):
+            continue
+        label = _tess_disposition_to_label(row.get("tfopwg_disp", ""))
+        if label is not None:
+            records.append((tid, label))
+
+    n_pos = sum(1 for _, l in records if l == 1.0)
+    n_neg = sum(1 for _, l in records if l == 0.0)
+    print(f"  TESS: {len(records)} labelled TOIs ({n_pos} positives, {n_neg} negatives).")
+    return records
+
+
+def download_k2_table() -> list[tuple[int, float]]:
+    """
+    Fetch the K2 candidates table from NASA Exoplanet Archive via TAP.
+
+    Returns
+    -------
+    list of (epic_id, label) tuples where label is 0.0 or 1.0.
+    """
+    print("Downloading K2 candidates table from NASA Exoplanet Archive ...")
+    try:
+        response = requests.get(_K2_TAP_URL, timeout=120)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"  WARNING: Failed to download K2 candidates table: {exc}. Skipping.")
+        return []
+
+    if not response.text.strip():
+        print("  WARNING: K2 candidates table response was empty. Skipping.")
+        return []
+
+    reader = csv.DictReader(io.StringIO(response.text))
+    if reader.fieldnames is None or "epic_name" not in reader.fieldnames or "disp" not in reader.fieldnames:
+        print(f"  WARNING: Unexpected K2 candidates columns: {reader.fieldnames}. Skipping.")
+        return []
+
+    records: list[tuple[int, float]] = []
+    for row in reader:
+        try:
+            epic_name = row["epic_name"].strip()
+            epic_id = int(epic_name.replace("EPIC", "").strip())
+        except (ValueError, KeyError, AttributeError):
+            continue
+        label = _k2_disposition_to_label(row.get("disp", ""))
+        if label is not None:
+            records.append((epic_id, label))
+
+    n_pos = sum(1 for _, l in records if l == 1.0)
+    n_neg = sum(1 for _, l in records if l == 0.0)
+    print(f"  K2: {len(records)} labelled candidates ({n_pos} positives, {n_neg} negatives).")
+    return records
+
+
+# ── FITS download helpers ─────────────────────────────────────────────────────
+
+def _fits_cache_path(fits_dir: Path, pattern: str) -> Path | None:
+    """Return the first FITS file matching *pattern* anywhere under fits_dir, or None."""
+    matches = list(fits_dir.rglob(f"*{pattern}*.fits"))
     return matches[0] if matches else None
 
 
-def _download_fits(kepid: int, fits_dir: Path) -> Path | None:
+def _download_fits_kepler(kepid: int, fits_dir: Path) -> Path | None:
     """
-    Download the long-cadence Kepler light curve for ``kepid`` using
-    astroquery.mast.  Returns the local path, or None if no product is found.
-
-    Only the first available light-curve product is downloaded to keep disk
-    usage manageable during training.
+    Download the long-cadence Kepler light curve for *kepid* via astroquery.mast.
+    Returns the local path or None if no product is found.
     """
     try:
         from astroquery.mast import Observations  # noqa: PLC0415
@@ -154,14 +252,13 @@ def _download_fits(kepid: int, fits_dir: Path) -> Path | None:
             "Install it with: pip install astroquery"
         ) from exc
 
-    # MAST stores Kepler targets as "kplrNNNNNNNNN" (9-digit zero-padded)
     target_name = f"kplr{kepid:09d}"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         obs_table = Observations.query_criteria(
             target_name=target_name,
             obs_collection="Kepler",
-            dataproduct_type="timeseries",
+            productSubGroupDescription="LLC",
         )
 
     if obs_table is None or len(obs_table) == 0:
@@ -172,14 +269,13 @@ def _download_fits(kepid: int, fits_dir: Path) -> Path | None:
         products = Observations.get_product_list(obs_table[0])
         lc_prods = Observations.filter_products(
             products,
-            productSubGroupDescription="LLC",  # long-cadence light curve
+            productSubGroupDescription="LLC",
             extension="fits",
         )
 
     if lc_prods is None or len(lc_prods) == 0:
         return None
 
-    # Download only the first product to keep things fast
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         manifest = Observations.download_products(
@@ -195,27 +291,137 @@ def _download_fits(kepid: int, fits_dir: Path) -> Path | None:
     return local_path if local_path.exists() else None
 
 
-# ── PyTorch Dataset ───────────────────────────────────────────────────────────
-
-class KeplerDataset(Dataset):
+def _download_fits_tess(tid: int, fits_dir: Path) -> Path | None:
     """
-    PyTorch Dataset for Kepler KOI light curves.
+    Download a TESS light curve for TIC *tid* via astroquery.mast.
+    Returns the local path or None if no product is found.
+    """
+    try:
+        from astroquery.mast import Observations  # noqa: PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "astroquery is required for FITS download. "
+            "Install it with: pip install astroquery"
+        ) from exc
 
-    For each star the preprocessing pipeline is run once and the top BLS
-    candidate is used.  Stars that fail preprocessing are silently skipped.
+    target_name = f"TIC {tid}"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        obs_table = Observations.query_criteria(
+            target_name=target_name,
+            obs_collection="TESS",
+            dataproduct_type="timeseries",
+            productSubGroupDescription="LC",
+        )
+
+    if obs_table is None or len(obs_table) == 0:
+        return None
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        products = Observations.get_product_list(obs_table[0])
+        lc_prods = Observations.filter_products(
+            products,
+            productSubGroupDescription="LC",
+            extension="fits",
+        )
+
+    if lc_prods is None or len(lc_prods) == 0:
+        return None
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        manifest = Observations.download_products(
+            lc_prods[:1],
+            download_dir=str(fits_dir),
+            cache=True,
+        )
+
+    if manifest is None or len(manifest) == 0:
+        return None
+
+    local_path = Path(manifest["Local Path"][0])
+    return local_path if local_path.exists() else None
+
+
+def _download_fits_k2(epic_id: int, fits_dir: Path) -> Path | None:
+    """
+    Download a K2 light curve for EPIC *epic_id* via astroquery.mast.
+    Returns the local path or None if no product is found.
+    """
+    try:
+        from astroquery.mast import Observations  # noqa: PLC0415
+    except ImportError as exc:
+        raise ImportError(
+            "astroquery is required for FITS download. "
+            "Install it with: pip install astroquery"
+        ) from exc
+
+    target_name = f"EPIC {epic_id}"
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        obs_table = Observations.query_criteria(
+            target_name=target_name,
+            obs_collection="K2",
+            dataproduct_type="timeseries",
+            productSubGroupDescription="LLC",
+        )
+
+    if obs_table is None or len(obs_table) == 0:
+        return None
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        products = Observations.get_product_list(obs_table[0])
+        lc_prods = Observations.filter_products(
+            products,
+            productSubGroupDescription="LLC",
+            extension="fits",
+        )
+
+    if lc_prods is None or len(lc_prods) == 0:
+        return None
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        manifest = Observations.download_products(
+            lc_prods[:1],
+            download_dir=str(fits_dir),
+            cache=True,
+        )
+
+    if manifest is None or len(manifest) == 0:
+        return None
+
+    local_path = Path(manifest["Local Path"][0])
+    return local_path if local_path.exists() else None
+
+
+# ── Multi-mission Dataset ─────────────────────────────────────────────────────
+
+class MultiMissionDataset(Dataset):
+    """
+    PyTorch Dataset combining Kepler KOIs, TESS TOIs, and K2 candidates.
+
+    For each target the preprocessing pipeline is run once and the top BLS
+    candidate is used.  Targets that fail preprocessing are silently skipped.
+    Each source (Kepler, TESS, K2) is downloaded independently and combined
+    into one flat list of (fits_path, label) pairs.
 
     Parameters
     ----------
-    csv_path :
-        Path to a CSV file with columns ``kepid`` and ``koi_disposition``.
-        If ``None``, the KOI table is downloaded automatically from the
-        NASA Exoplanet Archive.
     fits_dir :
         Directory used as both a cache for downloaded FITS files and as a
         search location for files already on disk.
+    csv_path :
+        Path to a local Kepler KOI CSV file (kepid, koi_disposition columns).
+        If ``None``, all three mission tables are downloaded from NASA.
     max_samples :
-        If set, cap the dataset at this many samples (drawn from the top of
-        the KOI list after label filtering).
+        If set, cap the combined dataset at this many samples (drawn from the
+        top of the combined list after label filtering).
+    augment :
+        If ``True``, apply random augmentation to positive examples at
+        __getitem__ time (50% probability per call).
     """
 
     def __init__(
@@ -223,32 +429,47 @@ class KeplerDataset(Dataset):
         fits_dir: str | Path,
         csv_path: str | Path | None = None,
         max_samples: int | None = None,
+        augment: bool = True,
     ) -> None:
         self.fits_dir = Path(fits_dir)
         self.fits_dir.mkdir(parents=True, exist_ok=True)
+        self.augment = augment
 
-        # Load label table
+        # ── Collect (fits_path, label) pairs from all missions ────────────────
+        all_pairs: list[tuple[Path, float]] = []
+
+        # --- Kepler KOIs ---
         if csv_path is not None:
-            records = self._load_csv(Path(csv_path))
+            koi_records = self._load_koi_csv(Path(csv_path))
         else:
-            records = download_koi_table()
+            koi_records = download_koi_table()
+
+        kepler_pairs = self._resolve_kepler(koi_records)
+        all_pairs.extend(kepler_pairs)
+
+        # --- TESS TOIs ---
+        toi_records = download_toi_table()
+        tess_pairs = self._resolve_tess(toi_records)
+        all_pairs.extend(tess_pairs)
+
+        # --- K2 candidates ---
+        k2_records = download_k2_table()
+        k2_pairs = self._resolve_k2(k2_records)
+        all_pairs.extend(k2_pairs)
 
         if max_samples is not None:
-            records = records[:max_samples]
+            all_pairs = all_pairs[:max_samples]
 
-        # Build item list by running preprocessing
-        self._items: list[tuple[np.ndarray, np.ndarray, float]] = []
+        # ── Preprocess each FITS file ─────────────────────────────────────────
+        # Items store: (global_view, local_view, scalar_features, label)
+        self._items: list[tuple[np.ndarray, np.ndarray, np.ndarray, float]] = []
         self._labels: list[float] = []
 
-        print(f"Preprocessing {len(records)} KOIs …")
-        for idx, (kepid, label) in enumerate(records):
+        print(f"Preprocessing {len(all_pairs)} targets across all missions ...")
+        for idx, (fits_path, label) in enumerate(all_pairs):
             if (idx + 1) % 100 == 0:
-                print(f"  {idx + 1}/{len(records)} processed, "
-                      f"{len(self._items)} valid so far …")
-
-            fits_path = self._get_fits(kepid)
-            if fits_path is None:
-                continue
+                print(f"  {idx + 1}/{len(all_pairs)} processed, "
+                      f"{len(self._items)} valid so far ...")
 
             try:
                 candidates = preprocess(fits_path, n_candidates=1)
@@ -259,24 +480,83 @@ class KeplerDataset(Dataset):
                 continue
 
             c = candidates[0]
+            scalar = np.array(
+                [c.period, c.duration, c.depth, c.bls_power],
+                dtype=np.float32,
+            )
             self._items.append((
                 c.global_view.astype(np.float32),
                 c.local_view.astype(np.float32),
+                scalar,
                 label,
             ))
             self._labels.append(label)
 
+        n_pos = sum(1 for l in self._labels if l == 1.0)
+        n_neg = sum(1 for l in self._labels if l == 0.0)
         print(f"Dataset ready: {len(self._items)} samples "
-              f"({sum(1 for l in self._labels if l == 1.0)} positives, "
-              f"{sum(1 for l in self._labels if l == 0.0)} negatives).")
+              f"({n_pos} positives, {n_neg} negatives).")
 
-    # ── Internal helpers ──────────────────────────────────────────────────────
+    # ── Mission-specific resolution helpers ───────────────────────────────────
+
+    def _resolve_kepler(self, records: list[tuple[int, float]]) -> list[tuple[Path, float]]:
+        """Locate or download FITS for each Kepler KOI; return (path, label) pairs."""
+        pairs: list[tuple[Path, float]] = []
+        for kepid, label in records:
+            padded = str(kepid).zfill(9)
+            cached = _fits_cache_path(self.fits_dir, padded)
+            if cached is not None:
+                pairs.append((cached, label))
+                continue
+            try:
+                path = _download_fits_kepler(kepid, self.fits_dir)
+            except Exception:  # noqa: BLE001
+                path = None
+            if path is not None:
+                pairs.append((path, label))
+        return pairs
+
+    def _resolve_tess(self, records: list[tuple[int, float]]) -> list[tuple[Path, float]]:
+        """Locate or download FITS for each TESS TOI; return (path, label) pairs."""
+        pairs: list[tuple[Path, float]] = []
+        for tid, label in records:
+            cached = _fits_cache_path(self.fits_dir, f"TIC{tid}")
+            if cached is None:
+                cached = _fits_cache_path(self.fits_dir, str(tid))
+            if cached is not None:
+                pairs.append((cached, label))
+                continue
+            try:
+                path = _download_fits_tess(tid, self.fits_dir)
+            except Exception:  # noqa: BLE001
+                path = None
+            if path is not None:
+                pairs.append((path, label))
+        return pairs
+
+    def _resolve_k2(self, records: list[tuple[int, float]]) -> list[tuple[Path, float]]:
+        """Locate or download FITS for each K2 candidate; return (path, label) pairs."""
+        pairs: list[tuple[Path, float]] = []
+        for epic_id, label in records:
+            cached = _fits_cache_path(self.fits_dir, f"EPIC{epic_id}")
+            if cached is None:
+                cached = _fits_cache_path(self.fits_dir, str(epic_id))
+            if cached is not None:
+                pairs.append((cached, label))
+                continue
+            try:
+                path = _download_fits_k2(epic_id, self.fits_dir)
+            except Exception:  # noqa: BLE001
+                path = None
+            if path is not None:
+                pairs.append((path, label))
+        return pairs
+
+    # ── Static CSV loader (Kepler only) ───────────────────────────────────────
 
     @staticmethod
-    def _load_csv(csv_path: Path) -> list[tuple[int, float]]:
+    def _load_koi_csv(csv_path: Path) -> list[tuple[int, float]]:
         """Parse a local CSV with ``kepid`` and ``koi_disposition`` columns."""
-        import csv  # noqa: PLC0415
-
         records: list[tuple[int, float]] = []
         with csv_path.open(newline="", encoding="utf-8") as fh:
             reader = csv.DictReader(fh)
@@ -285,39 +565,47 @@ class KeplerDataset(Dataset):
                     kepid = int(row["kepid"])
                 except (KeyError, ValueError):
                     continue
-                label = _disposition_to_label(row.get("koi_disposition", ""))
+                label = _koi_disposition_to_label(row.get("koi_disposition", ""))
                 if label is not None:
                     records.append((kepid, label))
         return records
-
-    def _get_fits(self, kepid: int) -> Path | None:
-        """Return a local FITS path for ``kepid``, downloading if necessary."""
-        cached = _fits_cache_path(self.fits_dir, kepid)
-        if cached is not None:
-            return cached
-        try:
-            return _download_fits(kepid, self.fits_dir)
-        except Exception:  # noqa: BLE001
-            return None
 
     # ── Dataset interface ─────────────────────────────────────────────────────
 
     def __len__(self) -> int:
         return len(self._items)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(
+        self, idx: int
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Returns
         -------
-        global_view : float32 tensor of shape (1, 2001)
-        local_view  : float32 tensor of shape (1, 201)
-        label       : float32 tensor of shape (1,)
+        global_view    : float32 tensor of shape (1, 2001)
+        local_view     : float32 tensor of shape (1, 201)
+        scalar_tensor  : float32 tensor of shape (4,)  — [period, duration, depth, bls_power]
+        label          : float32 tensor of shape (1,)
         """
-        gv, lv, label = self._items[idx]
+        gv, lv, scalar, label = self._items[idx]
+
+        # Runtime augmentation for positive examples
+        if self.augment and label == 1.0 and np.random.random() < 0.5:
+            gv = gv.copy()
+            lv = lv.copy()
+            if np.random.random() < 0.5:
+                # Random phase shift: simulate different t0
+                shift = np.random.randint(-100, 101)
+                gv = np.roll(gv, shift)
+            else:
+                # Gaussian noise injection on both views
+                gv = gv + np.random.normal(0, 0.05, gv.shape).astype(np.float32)
+                lv = lv + np.random.normal(0, 0.05, lv.shape).astype(np.float32)
+
         return (
-            torch.from_numpy(gv).unsqueeze(0),           # (1, 2001)
-            torch.from_numpy(lv).unsqueeze(0),           # (1, 201)
-            torch.tensor([label], dtype=torch.float32),  # (1,)
+            torch.from_numpy(gv).unsqueeze(0),            # (1, 2001)
+            torch.from_numpy(lv).unsqueeze(0),            # (1, 201)
+            torch.from_numpy(scalar),                     # (4,)
+            torch.tensor([label], dtype=torch.float32),   # (1,)
         )
 
     @property
@@ -330,12 +618,16 @@ class KeplerDataset(Dataset):
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train ExoNet on Kepler KOI data and export to ONNX.",
+        description="Train ExoNet on multi-mission data (Kepler/TESS/K2) and export to ONNX.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--epochs", type=int, default=30,
+        "--epochs", type=int, default=50,
         help="Number of training epochs.",
+    )
+    parser.add_argument(
+        "--patience", type=int, default=10,
+        help="Early stopping patience: stop if val AUC does not improve for this many epochs.",
     )
     parser.add_argument(
         "--lr", type=float, default=1e-3,
@@ -351,7 +643,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir", type=Path, required=True,
-        help="Directory where exonet.pt and exonet.onnx will be written.",
+        help="Directory where exonet.pt, exonet.onnx and threshold.json will be written.",
     )
     parser.add_argument(
         "--val-split", type=float, default=0.15,
@@ -363,11 +655,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--csv-path", type=Path, default=None,
-        help="Path to a local KOI CSV file. If omitted, downloads from NASA.",
+        help="Path to a local Kepler KOI CSV file. If omitted, all mission tables are downloaded from NASA.",
     )
     parser.add_argument(
         "--num-workers", type=int, default=0,
         help="DataLoader worker processes (set >0 for multi-process loading).",
+    )
+    parser.add_argument(
+        "--no-augment", action="store_true",
+        help="Disable data augmentation.",
     )
     return parser.parse_args(argv)
 
@@ -420,12 +716,13 @@ def _run_epoch(
 
     ctx = torch.enable_grad() if is_train else torch.no_grad()
     with ctx:
-        for gv, lv, labels in loader:
+        for gv, lv, scalar, labels in loader:
             gv     = gv.to(device)
             lv     = lv.to(device)
+            scalar = scalar.to(device)
             labels = labels.to(device)
 
-            scores = model(gv, lv)          # (B, 1)
+            scores = model(gv, lv, scalar)   # (B, 1)
             loss   = criterion(scores, labels)
 
             if is_train:
@@ -441,6 +738,45 @@ def _run_epoch(
     return mean_loss, all_scores, all_labels
 
 
+# ── Threshold sweep ───────────────────────────────────────────────────────────
+
+def _tune_threshold(
+    val_scores: list[float],
+    val_labels: list[float],
+    output_dir: Path,
+) -> float:
+    """
+    Sweep thresholds from 0.1 to 0.9 in steps of 0.01, pick the one with the
+    highest F1 on the validation set, print a summary, and save threshold.json.
+
+    Returns the optimal threshold.
+    """
+    scores_arr = np.array(val_scores)
+    labels_arr = np.array(val_labels)
+
+    best_thresh = 0.5
+    best_f1 = -1.0
+
+    thresholds = np.arange(0.10, 0.91, 0.01)
+    for thresh in thresholds:
+        preds = (scores_arr >= thresh).astype(int)
+        f1 = f1_score(labels_arr, preds, zero_division=0)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_thresh = float(thresh)
+
+    print(f"Optimal threshold: {best_thresh:.2f}  (val F1: {best_f1:.4f})")
+
+    threshold_path = output_dir / "threshold.json"
+    with threshold_path.open("w", encoding="utf-8") as fh:
+        json.dump({"threshold": round(best_thresh, 2)}, fh)
+    print(f"Threshold saved: {threshold_path}")
+
+    return best_thresh
+
+
+# ── Full training pipeline ────────────────────────────────────────────────────
+
 def train(args: argparse.Namespace) -> None:
     """Full training pipeline."""
 
@@ -448,10 +784,11 @@ def train(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Build dataset ─────────────────────────────────────────────────────────
-    dataset = KeplerDataset(
+    dataset = MultiMissionDataset(
         fits_dir=args.fits_dir,
         csv_path=args.csv_path,
         max_samples=args.max_samples,
+        augment=not args.no_augment,
     )
 
     if len(dataset) < 10:
@@ -521,9 +858,12 @@ def train(args: argparse.Namespace) -> None:
     )
 
     # ── Training loop ─────────────────────────────────────────────────────────
-    best_val_auc   = -1.0
-    pt_save_path   = output_dir / "exonet.pt"
-    onnx_save_path = output_dir / "exonet.onnx"
+    best_val_auc      = -1.0
+    best_val_scores: list[float] = []
+    best_val_labels: list[float] = []
+    epochs_no_improve = 0
+    pt_save_path      = output_dir / "exonet.pt"
+    onnx_save_path    = output_dir / "exonet.onnx"
 
     print(
         f"\n{'Epoch':>6}  {'Train Loss':>11}  {'Val Loss':>9}  {'Val AUC':>9}  {'LR':>10}"
@@ -551,16 +891,30 @@ def train(args: argparse.Namespace) -> None:
             f"{val_auc:>9.4f}  {current_lr:>10.2e}"
         )
 
-        if val_auc > best_val_auc:
+        improved = not (val_auc != val_auc) and val_auc > best_val_auc  # NaN-safe
+        if improved:
             best_val_auc = val_auc
+            best_val_scores = list(val_scores)
+            best_val_labels = list(val_labels_ep)
+            epochs_no_improve = 0
             torch.save(model.state_dict(), pt_save_path)
             print(f"         >> New best val AUC {best_val_auc:.4f} -- checkpoint saved.")
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= args.patience:
+                print(f"\nEarly stopping: val AUC has not improved for {args.patience} epochs.")
+                break
 
     print(f"\nTraining complete.  Best val AUC-ROC: {best_val_auc:.4f}")
     print(f"Best checkpoint: {pt_save_path}")
 
+    # ── Threshold tuning ──────────────────────────────────────────────────────
+    if best_val_scores and best_val_labels:
+        print("\nRunning threshold sweep on validation set ...")
+        _tune_threshold(best_val_scores, best_val_labels, output_dir)
+
     # ── ONNX export ───────────────────────────────────────────────────────────
-    print("\nExporting best checkpoint to ONNX …")
+    print("\nExporting best checkpoint to ONNX ...")
     ExoNetInference.export_from_pytorch(pt_save_path, onnx_save_path)
     print(f"ONNX model: {onnx_save_path}")
 
