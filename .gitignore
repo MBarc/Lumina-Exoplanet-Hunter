@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# PyInstaller build artifacts
+Installer/build/
+Installer/dist/
+Installer/__pycache__/
+
+# Embedded Python runtime (large external binary, not source code)
+Installer/python-embed/
+
+# Claude Code personal settings (not project code)
+.claude/
+
+# Training data and intermediate outputs (large, machine-generated)
+exonet-fits/
+exonet-output/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and runtime data
+*.log
+*.txt.bak

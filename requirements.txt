@@ -1,0 +1,25 @@
+# ── Core scientific stack ─────────────────────────────────────────────────────
+numpy>=1.24
+scipy>=1.10
+astropy>=5.3
+
+# ── FITS / MAST access ────────────────────────────────────────────────────────
+astroquery>=0.4.6
+
+# ── ML — training only (not needed on volunteer nodes) ───────────────────────
+# torch>=2.1        # install separately; not listed here to avoid pulling CUDA
+# torchvision       # not required; listed for reference only
+
+# ── ML — inference (lightweight, volunteer-node safe) ────────────────────────
+onnxruntime>=1.17   # use onnxruntime-gpu for CUDA-enabled nodes
+
+# ── Database ──────────────────────────────────────────────────────────────────
+pymongo>=4.6
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+dash>=2.16
+plotly>=5.20
+
+# ── System / service ─────────────────────────────────────────────────────────
+psutil>=5.9
+pywin32>=306        # Windows service support (win32serviceutil)

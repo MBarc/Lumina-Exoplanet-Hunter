@@ -1,11 +1,37 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import os
+
+ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 
 a = Analysis(
     ['installer.py'],
     pathex=[],
     binaries=[],
-    datas=[('python-embed', 'python-embed'), ('satellite.ico', '.')],
+    datas=[
+        # Embedded Python runtime (used to run the service on the target machine)
+        ('python-embed', 'python-embed'),
+
+        # Branding
+        ('satellite.ico', '.'),
+        ('logo.png', '.'),
+
+        # Windows service scripts
+        (os.path.join(ROOT, 'services', 'windows', 'dataGatheringService.py'),
+         os.path.join('services', 'windows')),
+        (os.path.join(ROOT, 'services', 'windows', 'dataGatheringServiceLogic.py'),
+         os.path.join('services', 'windows')),
+
+        # ML package
+        (os.path.join(ROOT, 'ml'), 'ml'),
+
+        # Dashboard package
+        (os.path.join(ROOT, 'dashboard'), 'dashboard'),
+
+        # ExoNet ONNX model
+        (os.path.join(ROOT, 'exonet.onnx'), '.'),
+        (os.path.join(ROOT, 'exonet.onnx.data'), '.'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

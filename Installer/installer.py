@@ -576,7 +576,7 @@ class InstallationPage(tk.Frame):
         style = ttk.Style()
         style.configure("green.Horizontal.TProgressbar", foreground="green", background="green")
         self.progress.config(style="green.Horizontal.TProgressbar")
-        self.progress["maximum"] = 6
+        self.progress["maximum"] = 7
         self.progress["value"] = 0
         self.progress_value = 0
 
@@ -605,28 +605,52 @@ class InstallationPage(tk.Frame):
         data_dir = config["data_directory"]
         config_dir = os.path.join(data_dir, "config")
         services_dir = os.path.join(data_dir, "services")
+        models_dir = os.path.join(data_dir, "models")
         python_exe = os.path.join(resource_path("python-embed"), "python.exe")
         service_src = resource_path(os.path.join("services", "windows", "dataGatheringService.py"))
         service_logic_src = resource_path(os.path.join("services", "windows", "dataGatheringServiceLogic.py"))
         service_dest = os.path.join(services_dir, "dataGatheringService.py")
+        ml_src = resource_path("ml")
+        dashboard_src = resource_path("dashboard")
+        model_src = resource_path("exonet.onnx")
+        model_dest = os.path.join(models_dir, "exonet.onnx")
 
         # Step 1 — Create directories
         try:
             self.log_message("Creating installation directories...")
             os.makedirs(config_dir, exist_ok=True)
             os.makedirs(services_dir, exist_ok=True)
+            os.makedirs(models_dir, exist_ok=True)
             self.log_message(f"  {data_dir}")
             self.increment_progress()
         except Exception as e:
             self.log_message(f"Failed to create directories: {e}")
             return
 
-        # Step 2 — Copy service files
+        # Step 2 — Copy service files and ML package
         try:
             self.log_message("Copying service files...")
             import shutil
             shutil.copy2(service_src, services_dir)
             shutil.copy2(service_logic_src, services_dir)
+            # Copy the ml/ and dashboard/ packages so the service can import them
+            for pkg_src, pkg_name in [(ml_src, "ml"), (dashboard_src, "dashboard")]:
+                pkg_dest = os.path.join(services_dir, pkg_name)
+                if os.path.isdir(pkg_src):
+                    if os.path.exists(pkg_dest):
+                        shutil.rmtree(pkg_dest)
+                    shutil.copytree(pkg_src, pkg_dest)
+            # Copy exonet.onnx (and companion .data file if present)
+            if os.path.isfile(model_src):
+                shutil.copy2(model_src, model_dest)
+                data_src = model_src + ".data"
+                if os.path.isfile(data_src):
+                    shutil.copy2(data_src, model_dest + ".data")
+                self.log_message(f"  ExoNet model copied to {model_dest}")
+            else:
+                self.log_message(
+                    f"  Note: exonet.onnx not found — place it at {model_dest} after training"
+                )
             self.log_message(f"  Service files copied to {services_dir}")
             self.increment_progress()
         except Exception as e:
@@ -636,6 +660,7 @@ class InstallationPage(tk.Frame):
         # Step 3 — Write config
         try:
             self.log_message("Writing configuration file...")
+            config["model_path"] = model_dest
             config_path = os.path.join(config_dir, "config.json")
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=4)
@@ -645,7 +670,34 @@ class InstallationPage(tk.Frame):
             self.log_message(f"Failed to write config: {e}")
             return
 
-        # Step 4 — Register Windows service
+        # Step 4 — Install Python dependencies
+        try:
+            self.log_message("Installing Python packages (this may take a moment)...")
+            packages = [
+                "psutil", "onnxruntime", "pymongo",
+                "astropy", "astroquery", "scipy",
+                "dash", "plotly",
+            ]
+            import shutil as _shutil
+            pip_exe = os.path.join(resource_path("python-embed"), "Scripts", "pip.exe")
+            if not os.path.isfile(pip_exe):
+                pip_exe = None  # fall back to -m pip
+            for pkg in packages:
+                if pip_exe:
+                    cmd = [pip_exe, "install", "--quiet", pkg]
+                else:
+                    cmd = [python_exe, "-m", "pip", "install", "--quiet", pkg]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    self.log_message(f"  {pkg} OK")
+                else:
+                    self.log_message(f"  Warning: {pkg} install failed (may already be present)")
+            self.increment_progress()
+        except Exception as e:
+            self.log_message(f"  Warning: package installation step failed: {e}")
+            self.increment_progress()
+
+        # Step 5 — Register Windows service
         self.log_message("Registering Lumina background service...")
         if not self.run_command(
             [python_exe, service_dest, "install"],
@@ -655,7 +707,7 @@ class InstallationPage(tk.Frame):
             return
         self.increment_progress()
 
-        # Step 5 — Start service
+        # Step 6 — Start service
         self.log_message("Starting Lumina service...")
         if not self.run_command(
             ["net", "start", "ExoplanetDataGathering"],
@@ -665,7 +717,7 @@ class InstallationPage(tk.Frame):
             return
         self.increment_progress()
 
-        # Step 6 — Shortcuts, Start Menu, Add/Remove Programs
+        # Step 7 — Shortcuts, Start Menu, Add/Remove Programs
         self.log_message("Registering application...")
         lumina_root = os.path.dirname(data_dir)
         uninstall_ps1 = os.path.join(data_dir, "uninstall.ps1")

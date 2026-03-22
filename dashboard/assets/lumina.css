@@ -1,0 +1,156 @@
+/* === RESET & BASE === */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: #04090f;
+  color: #e8f4ff;
+  font-family: 'Trebuchet MS', 'Segoe UI', Arial, sans-serif;
+  font-size: 13px;
+}
+
+/* === APP SHELL === */
+.app-container { display: flex; flex-direction: column; height: 100vh; }
+
+/* === HEADER === */
+.header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 20px; height: 52px; flex-shrink: 0;
+  background: #04090f;
+  border-bottom: 1px solid rgba(0,200,255,0.4);
+  box-shadow: 0 2px 20px rgba(0,200,255,0.12);
+}
+.header-left { display: flex; align-items: center; gap: 14px; }
+.header-title {
+  color: #00c8ff;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px; font-weight: bold;
+  letter-spacing: 0.35em; text-transform: uppercase;
+  text-shadow: 0 0 16px rgba(0,200,255,0.7);
+}
+.header-right { display: flex; align-items: center; gap: 16px; }
+.utc-clock {
+  font-family: 'Consolas', monospace; font-size: 12px;
+  color: #ffd166; text-shadow: 0 0 8px rgba(255,209,102,0.4);
+}
+.node-badge {
+  border: 1px solid #06d6a0; border-radius: 3px;
+  padding: 2px 10px;
+  font-family: 'Consolas', monospace; font-size: 10px;
+  color: #06d6a0; letter-spacing: 0.1em;
+  background: rgba(6,214,160,0.08);
+  text-shadow: 0 0 6px rgba(6,214,160,0.4);
+}
+
+/* === MAIN GRID === */
+.main-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1.2fr 1fr;
+  grid-template-rows: 1fr 1fr 210px;
+  grid-template-areas:
+    "live network nodes"
+    "live detail  nodes"
+    "cands cands  cands";
+  gap: 10px; padding: 10px;
+  flex: 1; min-height: 0; overflow: hidden;
+}
+
+/* === PANELS === */
+.panel {
+  background: #0d1f3c;
+  border: 1px solid rgba(0,200,255,0.18);
+  box-shadow: 0 0 24px rgba(0,200,255,0.04), inset 0 0 48px rgba(0,0,0,0.35);
+  border-radius: 3px; padding: 14px;
+  display: flex; flex-direction: column;
+  min-height: 0; overflow: hidden; position: relative;
+}
+.panel::before {
+  content:''; position:absolute; top:0; left:0;
+  width:24px; height:2px; background:#00c8ff; opacity:.7;
+}
+.panel::after {
+  content:''; position:absolute; top:0; left:0;
+  width:2px; height:24px; background:#00c8ff; opacity:.7;
+}
+.panel-live   { grid-area: live; }
+.panel-network{ grid-area: network; }
+.panel-detail { grid-area: detail; }
+.panel-nodes  { grid-area: nodes; overflow-y: auto; }
+.panel-cands  { grid-area: cands; }
+
+/* === PANEL TITLES === */
+.panel-title {
+  color: #00c8ff;
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 10px; font-weight: bold;
+  letter-spacing: 0.3em; text-transform: uppercase;
+  border-bottom: 1px solid rgba(0,200,255,0.12);
+  padding-bottom: 8px; margin-bottom: 10px; flex-shrink: 0;
+}
+
+/* === LIVE ANALYSIS PANEL === */
+.tic-label {
+  font-family: 'Consolas', monospace; font-size: 11px;
+  color: #ffd166; margin-bottom: 4px; flex-shrink: 0;
+  min-height: 16px; text-shadow: 0 0 6px rgba(255,209,102,0.35);
+}
+.curve-stats { display: flex; gap: 24px; margin-top: 4px; flex-shrink: 0; }
+.stat-chip-label {
+  font-family: 'Consolas', monospace; font-size: 9px;
+  color: #4a6380; letter-spacing: 0.15em; text-transform: uppercase;
+}
+.stat-chip-value { font-family: 'Consolas', monospace; font-size: 12px; color: #e8f4ff; }
+
+/* === NETWORK STATS === */
+.network-stat-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 10px; flex: 1;
+}
+.network-stat-cell { display: flex; flex-direction: column; justify-content: center; padding: 6px; }
+.big-number {
+  font-family: 'Consolas', monospace; font-size: 26px; font-weight: bold; line-height: 1;
+}
+.big-number.cyan   { color: #00c8ff; text-shadow: 0 0 16px rgba(0,200,255,0.55); }
+.big-number.gold   { color: #ffd166; text-shadow: 0 0 14px rgba(255,209,102,0.45); }
+.big-number.green  { color: #06d6a0; text-shadow: 0 0 14px rgba(6,214,160,0.45); }
+.big-number.purple { color: #7b2fbe; text-shadow: 0 0 14px rgba(123,47,190,0.5); }
+.big-number-label {
+  font-family: 'Consolas', monospace; font-size: 9px;
+  letter-spacing: 0.2em; color: #4a6380; text-transform: uppercase; margin-top: 3px;
+}
+
+/* === DETAIL PANEL === */
+.detail-header { display: flex; align-items: center; margin-bottom: 6px; flex-shrink: 0; }
+.score-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 2px;
+  font-family: 'Consolas', monospace; font-size: 9px; font-weight: bold;
+  letter-spacing: 0.1em; text-transform: uppercase; margin-left: 8px;
+}
+.badge-strong    { background: #06d6a0; color: #04090f; }
+.badge-candidate { background: #ffd166; color: #04090f; }
+.badge-false     { background: #ff4d6d; color: #fff; }
+
+/* === NODE STATUS === */
+.node-row {
+  display: grid; grid-template-columns: 10px 1fr auto;
+  align-items: start; gap: 8px;
+  padding: 7px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.node-hostname { font-family: 'Consolas', monospace; font-size: 11px; color: #e8f4ff; }
+.node-meta { font-family: 'Consolas', monospace; font-size: 9px; color: #4a6380; margin-top: 2px; }
+.cpu-bar-bg { background: rgba(255,255,255,0.06); height: 3px; border-radius: 2px; width: 56px; margin-top: 4px; }
+.cpu-bar-fg { background: #00c8ff; height: 3px; border-radius: 2px; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 3px; flex-shrink: 0; }
+.dot-green  { background: #06d6a0; box-shadow: 0 0 5px #06d6a0; }
+.dot-amber  { background: #ffd166; box-shadow: 0 0 5px #ffd166; }
+.dot-red    { background: #ff4d6d; box-shadow: 0 0 5px #ff4d6d; }
+
+/* === EMPTY STATE === */
+.empty-state {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  color: #4a6380; font-family: 'Consolas', monospace; font-size: 11px; letter-spacing: 0.1em;
+}
+
+/* === SCROLLBAR === */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,200,255,0.2); border-radius: 2px; }
