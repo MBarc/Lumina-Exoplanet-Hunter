@@ -15,6 +15,67 @@ def resource_path(relative_path: str) -> str:
     return os.path.abspath(relative_path)
 
 
+def _write_uninstall_script(ps1_path: str, data_dir: str, log_dir: str, lumina_root: str) -> None:
+    """Write uninstall.ps1 with install paths embedded."""
+    script = f"""\
+Add-Type -AssemblyName System.Windows.Forms
+
+$result = [System.Windows.Forms.MessageBox]::Show(
+    "Are you sure you want to uninstall Lumina?`n`nThis will stop the background service and remove all Lumina files.",
+    "Uninstall Lumina",
+    [System.Windows.Forms.MessageBoxButtons]::YesNo,
+    [System.Windows.Forms.MessageBoxIcon]::Warning
+)
+if ($result -ne [System.Windows.Forms.DialogResult]::Yes) {{ exit }}
+
+# Stop and remove service
+net stop ExoplanetDataGathering 2>$null
+sc.exe delete ExoplanetDataGathering 2>$null
+
+# Remove desktop shortcuts
+$desktop = [Environment]::GetFolderPath("Desktop")
+Remove-Item "$desktop\\Lumina Dashboard.url" -ErrorAction SilentlyContinue
+Remove-Item "$desktop\\Uninstall Lumina.lnk" -ErrorAction SilentlyContinue
+
+# Schedule directory deletion after this script exits
+$batch = "$env:TEMP\\lumina_cleanup.bat"
+Set-Content $batch "@echo off`r`ntimeout /t 2 /nobreak >nul`r`nrd /s /q `"{lumina_root}`"`r`ndel `"%~f0`""
+Start-Process "cmd.exe" -ArgumentList "/c `"$batch`"" -WindowStyle Hidden
+
+[System.Windows.Forms.MessageBox]::Show(
+    "Lumina has been uninstalled.`n`nYou may need to restart your browser to clear cached dashboard content.",
+    "Uninstall Complete",
+    [System.Windows.Forms.MessageBoxButtons]::OK,
+    [System.Windows.Forms.MessageBoxIcon]::Information
+)
+"""
+    with open(ps1_path, "w", encoding="utf-8") as f:
+        f.write(script)
+
+
+def _create_lnk_shortcut(lnk_path: str, target: str, arguments: str = "") -> None:
+    """Create a Windows .lnk shortcut via a temporary PowerShell script."""
+    import tempfile
+    ps_lines = [
+        "Add-Type -AssemblyName System.Windows.Forms",
+        "$shell = New-Object -ComObject WScript.Shell",
+        f"$s = $shell.CreateShortcut(@'{lnk_path}')",
+        f"$s.TargetPath = @'{target}'",
+        f"$s.Arguments = @'{arguments}'",
+        "$s.Save()",
+    ]
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".ps1", delete=False, encoding="utf-8") as f:
+        f.write("\n".join(ps_lines))
+        tmp = f.name
+    try:
+        subprocess.run(
+            ["powershell", "-ExecutionPolicy", "Bypass", "-File", tmp],
+            capture_output=True, check=True
+        )
+    finally:
+        os.unlink(tmp)
+
+
 class LuminaApp(tk.Tk):
 
     FG_COLOR = "white"
@@ -93,13 +154,22 @@ class WelcomePage(tk.Frame):
         content = tk.Frame(self, bg=controller.BG_COLOR)
         content.grid(row=1, column=1, sticky="nsew")
 
+        try:
+            raw_img = tk.PhotoImage(file=resource_path("logo.png"))
+            logo_img = raw_img.subsample(4)  # 500px → 125px
+            logo_label = tk.Label(content, image=logo_img, bg=controller.BG_COLOR)
+            logo_label.image = logo_img
+            logo_label.pack(pady=(10, 0))
+        except Exception:
+            pass
+
         tk.Label(
             content,
             text="Welcome to Lumina",
             font=("Helvetica", 22, "bold"),
             fg=controller.FG_COLOR,
             bg=controller.BG_COLOR
-        ).pack(pady=20)
+        ).pack(pady=(10, 5))
 
         tk.Label(
             content,
@@ -117,14 +187,14 @@ class WelcomePage(tk.Frame):
             font=("Helvetica", 12),
             fg=controller.FG_COLOR,
             bg=controller.BG_COLOR
-        ).pack(padx=20, pady=20)
+        ).pack(padx=20, pady=(5, 10))
 
         ttk.Button(
             content,
             text="Get Started",
             command=lambda: controller.show_frame(InstallDirPage),
             style="Custom.TButton"
-        ).pack(pady=20)
+        ).pack(pady=10)
 
 
 class InstallDirPage(tk.Frame):
@@ -484,7 +554,7 @@ class InstallationPage(tk.Frame):
         style = ttk.Style()
         style.configure("green.Horizontal.TProgressbar", foreground="green", background="green")
         self.progress.config(style="green.Horizontal.TProgressbar")
-        self.progress["maximum"] = 5
+        self.progress["maximum"] = 6
         self.progress["value"] = 0
         self.progress_value = 0
 
@@ -571,6 +641,41 @@ class InstallationPage(tk.Frame):
             error_msg="Failed to start service"
         ):
             return
+        self.increment_progress()
+
+        # Step 6 — Desktop shortcuts + uninstall script
+        self.log_message("Creating desktop shortcuts...")
+        desktop = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Desktop")
+        uninstall_ps1 = os.path.join(data_dir, "uninstall.ps1")
+
+        # Write uninstall.ps1 with paths baked in
+        try:
+            lumina_root = os.path.dirname(data_dir)
+            log_dir = config["log_directory"]
+            _write_uninstall_script(uninstall_ps1, data_dir, log_dir, lumina_root)
+            self.log_message("  Uninstall script written.")
+        except Exception as e:
+            self.log_message(f"  Warning: Could not write uninstall script: {e}")
+
+        # Lumina Dashboard shortcut (.url)
+        try:
+            with open(os.path.join(desktop, "Lumina Dashboard.url"), "w") as f:
+                f.write("[InternetShortcut]\nURL=http://localhost:8050\n")
+            self.log_message("  Created 'Lumina Dashboard' shortcut on Desktop.")
+        except Exception as e:
+            self.log_message(f"  Warning: Could not create dashboard shortcut: {e}")
+
+        # Uninstall Lumina shortcut (.lnk via PowerShell)
+        try:
+            _create_lnk_shortcut(
+                lnk_path=os.path.join(desktop, "Uninstall Lumina.lnk"),
+                target=r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                arguments=f'-ExecutionPolicy Bypass -WindowStyle Hidden -File "{uninstall_ps1}"',
+            )
+            self.log_message("  Created 'Uninstall Lumina' shortcut on Desktop.")
+        except Exception as e:
+            self.log_message(f"  Warning: Could not create uninstall shortcut: {e}")
+
         self.increment_progress()
 
         self.log_message("Installation complete.")
