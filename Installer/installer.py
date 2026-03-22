@@ -15,7 +15,10 @@ def resource_path(relative_path: str) -> str:
     return os.path.abspath(relative_path)
 
 
-def _write_uninstall_script(ps1_path: str, data_dir: str, log_dir: str, lumina_root: str) -> None:
+_POWERSHELL = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+
+
+def _write_uninstall_script(ps1_path: str, lumina_root: str) -> None:
     """Write uninstall.ps1 with install paths embedded."""
     script = f"""\
 Add-Type -AssemblyName System.Windows.Forms
@@ -32,10 +35,16 @@ if ($result -ne [System.Windows.Forms.DialogResult]::Yes) {{ exit }}
 net stop ExoplanetDataGathering 2>$null
 sc.exe delete ExoplanetDataGathering 2>$null
 
-# Remove desktop shortcuts
+# Remove Desktop shortcut
 $desktop = [Environment]::GetFolderPath("Desktop")
 Remove-Item "$desktop\\Lumina Dashboard.url" -ErrorAction SilentlyContinue
-Remove-Item "$desktop\\Uninstall Lumina.lnk" -ErrorAction SilentlyContinue
+
+# Remove Start Menu folder
+$startMenu = [Environment]::GetFolderPath("CommonPrograms")
+Remove-Item "$startMenu\\Lumina" -Recurse -ErrorAction SilentlyContinue
+
+# Remove Add/Remove Programs registry entry
+Remove-Item -Path "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Lumina" -ErrorAction SilentlyContinue
 
 # Schedule directory deletion after this script exits
 $batch = "$env:TEMP\\lumina_cleanup.bat"
@@ -43,7 +52,7 @@ Set-Content $batch "@echo off`r`ntimeout /t 2 /nobreak >nul`r`nrd /s /q `"{lumin
 Start-Process "cmd.exe" -ArgumentList "/c `"$batch`"" -WindowStyle Hidden
 
 [System.Windows.Forms.MessageBox]::Show(
-    "Lumina has been uninstalled.`n`nYou may need to restart your browser to clear cached dashboard content.",
+    "Lumina has been uninstalled successfully.",
     "Uninstall Complete",
     [System.Windows.Forms.MessageBoxButtons]::OK,
     [System.Windows.Forms.MessageBoxIcon]::Information
@@ -57,7 +66,6 @@ def _create_lnk_shortcut(lnk_path: str, target: str, arguments: str = "") -> Non
     """Create a Windows .lnk shortcut via a temporary PowerShell script."""
     import tempfile
     ps_lines = [
-        "Add-Type -AssemblyName System.Windows.Forms",
         "$shell = New-Object -ComObject WScript.Shell",
         f"$s = $shell.CreateShortcut(@'{lnk_path}')",
         f"$s.TargetPath = @'{target}'",
@@ -74,6 +82,20 @@ def _create_lnk_shortcut(lnk_path: str, target: str, arguments: str = "") -> Non
         )
     finally:
         os.unlink(tmp)
+
+
+def _register_uninstaller(lumina_root: str, uninstall_cmd: str) -> None:
+    """Register Lumina in Add/Remove Programs (HKLM)."""
+    import winreg
+    key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Lumina"
+    with winreg.CreateKeyEx(winreg.HKEY_LOCAL_MACHINE, key_path, 0, winreg.KEY_SET_VALUE) as key:
+        winreg.SetValueEx(key, "DisplayName",     0, winreg.REG_SZ,    "Lumina")
+        winreg.SetValueEx(key, "DisplayVersion",  0, winreg.REG_SZ,    "1.0.0")
+        winreg.SetValueEx(key, "Publisher",       0, winreg.REG_SZ,    "ExoNet")
+        winreg.SetValueEx(key, "InstallLocation", 0, winreg.REG_SZ,    lumina_root)
+        winreg.SetValueEx(key, "UninstallString", 0, winreg.REG_SZ,    uninstall_cmd)
+        winreg.SetValueEx(key, "NoModify",        0, winreg.REG_DWORD, 1)
+        winreg.SetValueEx(key, "NoRepair",        0, winreg.REG_DWORD, 1)
 
 
 class LuminaApp(tk.Tk):
@@ -643,38 +665,52 @@ class InstallationPage(tk.Frame):
             return
         self.increment_progress()
 
-        # Step 6 — Desktop shortcuts + uninstall script
-        self.log_message("Creating desktop shortcuts...")
-        desktop = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Desktop")
+        # Step 6 — Shortcuts, Start Menu, Add/Remove Programs
+        self.log_message("Registering application...")
+        lumina_root = os.path.dirname(data_dir)
         uninstall_ps1 = os.path.join(data_dir, "uninstall.ps1")
+        uninstall_cmd = f'{_POWERSHELL} -ExecutionPolicy Bypass -WindowStyle Hidden -File "{uninstall_ps1}"'
 
-        # Write uninstall.ps1 with paths baked in
+        # Write uninstall.ps1
         try:
-            lumina_root = os.path.dirname(data_dir)
-            log_dir = config["log_directory"]
-            _write_uninstall_script(uninstall_ps1, data_dir, log_dir, lumina_root)
+            _write_uninstall_script(uninstall_ps1, lumina_root)
             self.log_message("  Uninstall script written.")
         except Exception as e:
             self.log_message(f"  Warning: Could not write uninstall script: {e}")
 
-        # Lumina Dashboard shortcut (.url)
+        # Desktop shortcut — Dashboard only
         try:
+            desktop = os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "Desktop")
             with open(os.path.join(desktop, "Lumina Dashboard.url"), "w") as f:
                 f.write("[InternetShortcut]\nURL=http://localhost:8050\n")
-            self.log_message("  Created 'Lumina Dashboard' shortcut on Desktop.")
+            self.log_message("  Created Desktop shortcut.")
         except Exception as e:
-            self.log_message(f"  Warning: Could not create dashboard shortcut: {e}")
+            self.log_message(f"  Warning: Could not create desktop shortcut: {e}")
 
-        # Uninstall Lumina shortcut (.lnk via PowerShell)
+        # Start Menu — Lumina folder with Dashboard + Uninstall
         try:
+            start_menu = os.path.join(
+                os.environ.get("ProgramData", r"C:\ProgramData"),
+                "Microsoft", "Windows", "Start Menu", "Programs", "Lumina"
+            )
+            os.makedirs(start_menu, exist_ok=True)
+            with open(os.path.join(start_menu, "Lumina Dashboard.url"), "w") as f:
+                f.write("[InternetShortcut]\nURL=http://localhost:8050\n")
             _create_lnk_shortcut(
-                lnk_path=os.path.join(desktop, "Uninstall Lumina.lnk"),
-                target=r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                lnk_path=os.path.join(start_menu, "Uninstall Lumina.lnk"),
+                target=_POWERSHELL,
                 arguments=f'-ExecutionPolicy Bypass -WindowStyle Hidden -File "{uninstall_ps1}"',
             )
-            self.log_message("  Created 'Uninstall Lumina' shortcut on Desktop.")
+            self.log_message("  Created Start Menu entries.")
         except Exception as e:
-            self.log_message(f"  Warning: Could not create uninstall shortcut: {e}")
+            self.log_message(f"  Warning: Could not create Start Menu entries: {e}")
+
+        # Add/Remove Programs registry entry
+        try:
+            _register_uninstaller(lumina_root, uninstall_cmd)
+            self.log_message("  Registered in Add/Remove Programs.")
+        except Exception as e:
+            self.log_message(f"  Warning: Could not register uninstaller: {e}")
 
         self.increment_progress()
 
