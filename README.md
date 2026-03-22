@@ -1,4 +1,8 @@
-# Exoplanet Hunter
+<div align="center">
+  <img src="branding/logo.svg" alt="Lumina Logo" width="220"/>
+</div>
+
+# Lumina
 
 **A distributed computing network for the detection of exoplanet candidates across open astronomical datasets.**
 
@@ -6,7 +10,7 @@
 
 ## What Is This?
 
-Exoplanet Hunter is an open-source project that turns idle computers into exoplanet search nodes. Every participating machine downloads, processes, and analyzes stellar light curve data from NASA and other space missions — automatically, in the background, while you go about your day.
+Lumina is an open-source project that turns idle computers into exoplanet search nodes. Every participating machine downloads, processes, and analyzes stellar light curve data from NASA and other space missions — automatically, in the background, while you go about your day.
 
 Together, these machines form **ExoNet**: a volunteer-powered network working toward a single goal — finding worlds beyond our solar system.
 
@@ -22,7 +26,7 @@ There are more potential exoplanet candidates waiting in existing data than curr
 
 ## How It Works
 
-1. **Install** the Exoplanet Hunter client on any Windows machine
+1. **Install** the Lumina client on any Windows machine
 2. The client runs quietly as a **background service** — no interaction required
 3. It connects to the ExoNet coordination network, claims an unprocessed data sector, and begins analysis
 4. Light curves are retrieved from mission archives (TESS, Kepler, K2, and others), processed locally, and screened for transit signatures
@@ -34,7 +38,7 @@ The more machines participating, the faster the full archive gets covered.
 
 ## Supported Missions
 
-Exoplanet Hunter is designed to work with any mission that produces light curve data, including:
+Lumina is designed to work with any mission that produces light curve data, including:
 
 - **TESS** (Transiting Exoplanet Survey Satellite)
 - **Kepler**
@@ -83,7 +87,7 @@ The universe is large. Your name could end up on a world orbiting another star.
 
 ## For Researchers & Developers
 
-Exoplanet Hunter is fully open source. If you are interested in contributing to the detection pipeline, extending mission support, or integrating candidate data into your own research workflows, see the project source and open an issue or pull request.
+Lumina is fully open source. If you are interested in contributing to the detection pipeline, extending mission support, or integrating candidate data into your own research workflows, see the project source and open an issue or pull request.
 
 ---
 
@@ -93,4 +97,4 @@ Every candidate flagged by ExoNet is a star worth a closer look — a potential 
 
 ---
 
-*Exoplanet Hunter is an independent open-source initiative and is not affiliated with NASA or any space agency.*
+*Lumina is an independent open-source initiative and is not affiliated with NASA or any space agency.*

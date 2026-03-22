@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500">
+  <defs>
+    <!-- Backgrounds -->
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0d1f3c"/>
+      <stop offset="100%" stop-color="#04090f"/>
+    </radialGradient>
+
+    <!-- Star glow -->
+    <radialGradient id="starHalo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="20%"  stop-color="#fff8d6" stop-opacity="0.9"/>
+      <stop offset="55%"  stop-color="#ffd166" stop-opacity="0.45"/>
+      <stop offset="100%" stop-color="#ff8c00" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Planet surface -->
+    <radialGradient id="planetSurface" cx="35%" cy="30%" r="65%">
+      <stop offset="0%"   stop-color="#7ee8d8"/>
+      <stop offset="50%"  stop-color="#06d6a0"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </radialGradient>
+
+    <!-- Filters -->
+    <filter id="starGlow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="nodeGlow" x="-150%" y="-150%" width="400%" height="400%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="cyanGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <clipPath id="mainClip">
+      <circle cx="250" cy="250" r="218"/>
+    </clipPath>
+  </defs>
+
+  <!-- ── Base circle ── -->
+  <circle cx="250" cy="250" r="248" fill="#04090f"/>
+  <circle cx="250" cy="250" r="220" fill="url(#bgGrad)"/>
+
+  <!-- Outer border ring -->
+  <circle cx="250" cy="250" r="234" fill="none" stroke="#00c8ff" stroke-width="1" opacity="0.35"/>
+  <circle cx="250" cy="250" r="220" fill="none" stroke="#00c8ff" stroke-width="1.5" opacity="0.55"/>
+
+  <!-- ── Background stars ── -->
+  <g clip-path="url(#mainClip)" opacity="0.7">
+    <circle cx="75"  cy="140" r="1.2" fill="white" opacity="0.6"/>
+    <circle cx="148" cy="68"  r="1.0" fill="white" opacity="0.5"/>
+    <circle cx="195" cy="110" r="0.8" fill="white" opacity="0.4"/>
+    <circle cx="330" cy="82"  r="1.2" fill="white" opacity="0.6"/>
+    <circle cx="400" cy="150" r="1.0" fill="white" opacity="0.5"/>
+    <circle cx="428" cy="200" r="0.8" fill="white" opacity="0.4"/>
+    <circle cx="88"  cy="295" r="1.0" fill="white" opacity="0.5"/>
+    <circle cx="58"  cy="350" r="1.2" fill="white" opacity="0.4"/>
+    <circle cx="162" cy="390" r="0.8" fill="white" opacity="0.4"/>
+    <circle cx="420" cy="310" r="1.0" fill="white" opacity="0.5"/>
+    <circle cx="118" cy="185" r="0.9" fill="white" opacity="0.35"/>
+    <circle cx="372" cy="195" r="0.9" fill="white" opacity="0.35"/>
+  </g>
+
+  <!-- ── Star halo layers ── -->
+  <circle cx="250" cy="218" r="155" fill="url(#starHalo)" opacity="0.25" clip-path="url(#mainClip)"/>
+  <circle cx="250" cy="218" r="90"  fill="url(#starHalo)" opacity="0.35" filter="url(#starGlow)" clip-path="url(#mainClip)"/>
+
+  <!-- ── Star core ── -->
+  <circle cx="250" cy="218" r="38" fill="#fff8d6" filter="url(#starGlow)"/>
+  <circle cx="250" cy="218" r="26" fill="#fffef5"/>
+  <circle cx="250" cy="218" r="16" fill="white"/>
+
+  <!-- ── Planet (transiting — silhouetted against the star) ── -->
+  <!-- Dark body occluding the star -->
+  <circle cx="362" cy="218" r="20" fill="#04090f" opacity="0.97"/>
+  <!-- Subtle planet surface visible at edges not overlapping star -->
+  <circle cx="362" cy="218" r="18" fill="url(#planetSurface)" opacity="0.18"/>
+  <!-- Atmosphere ring -->
+  <circle cx="362" cy="218" r="21.5" fill="none" stroke="#06d6a0" stroke-width="2.5" opacity="0.5" filter="url(#cyanGlow)"/>
+  <!-- Thin inner atmosphere highlight -->
+  <circle cx="362" cy="218" r="19.5" fill="none" stroke="#7ee8d8" stroke-width="1"   opacity="0.3"/>
+
+  <!-- ── Light curve (transit dip signature) ── -->
+  <g clip-path="url(#mainClip)">
+    <!-- Subtle horizontal baseline grid line -->
+    <line x1="38" y1="342" x2="462" y2="342" stroke="#00c8ff" stroke-width="0.75" opacity="0.15" stroke-dasharray="4 6"/>
+
+    <!-- Main light curve path — trapezoid shape (flat bottom = full transit) -->
+    <path d="M 38 342
+             L 158 342
+             C 168 342, 174 356, 178 366
+             C 180 372, 185 376, 192 376
+             L 308 376
+             C 315 376, 320 372, 322 366
+             C 326 356, 332 342, 342 342
+             L 462 342"
+          stroke="#00c8ff" stroke-width="2.5" fill="none"
+          stroke-linecap="round" stroke-linejoin="round"
+          filter="url(#cyanGlow)" opacity="0.95"/>
+
+    <!-- Key data points -->
+    <circle cx="158" cy="342" r="3.5" fill="#00c8ff" opacity="0.85"/>
+    <circle cx="250" cy="376" r="3.5" fill="#00c8ff" opacity="0.85"/>
+    <circle cx="342" cy="342" r="3.5" fill="#00c8ff" opacity="0.85"/>
+  </g>
+
+  <!-- ── Wordmark ── -->
+  <text
+    x="250" y="420"
+    text-anchor="middle"
+    font-family="'Trebuchet MS', 'Gill Sans', 'Arial Narrow', Arial, sans-serif"
+    font-size="34"
+    font-weight="700"
+    letter-spacing="12"
+    fill="#e8f4ff">LUMINA</text>
+
+  <!-- Tagline -->
+  <text
+    x="250" y="443"
+    text-anchor="middle"
+    font-family="'Trebuchet MS', Arial, sans-serif"
+    font-size="10.5"
+    font-weight="400"
+    letter-spacing="4"
+    fill="#00c8ff"
+    opacity="0.75">EXOPLANET HUNTER</text>
+
+</svg>
