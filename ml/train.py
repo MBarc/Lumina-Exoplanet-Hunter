@@ -53,8 +53,8 @@ import requests
 import torch
 import torch.nn as nn
 from sklearn.metrics import f1_score, roc_auc_score
-from sklearn.model_selection import train_test_split
-from torch.utils.data import DataLoader, Dataset, Subset
+from sklearn.model_selection import StratifiedKFold, train_test_split
+from torch.utils.data import DataLoader, Dataset, Subset, WeightedRandomSampler
 
 from ml.inference import ExoNetInference
 from ml.model import GLOBAL_LEN, LOCAL_LEN, ExoNet
@@ -239,10 +239,29 @@ def _fits_cache_path(fits_dir: Path, pattern: str) -> Path | None:
     return matches[0] if matches else None
 
 
-def _download_fits_kepler(kepid: int, fits_dir: Path) -> Path | None:
+def _mast_download(
+    target_name: str,
+    obs_collection: str,
+    fits_dir: Path,
+    product_subgroup: str,
+    dataproduct_type: str = "timeseries",
+) -> Path | None:
     """
-    Download the long-cadence Kepler light curve for *kepid* via astroquery.mast.
-    Returns the local path or None if no product is found.
+    Generic MAST downloader used by all three mission helpers.
+
+    Parameters
+    ----------
+    target_name :
+        MAST target identifier (e.g. ``"kplr002440757"``, ``"TIC 261136679"``).
+    obs_collection :
+        MAST collection name (``"Kepler"``, ``"TESS"``, ``"K2"``).
+    fits_dir :
+        Local directory used as both a download destination and a cache.
+    product_subgroup :
+        Value for the ``productSubGroupDescription`` filter applied to the
+        product list **after** the observation query (not in ``query_criteria``).
+    dataproduct_type :
+        Product type filter for the observation query (default ``"timeseries"``).
     """
     try:
         from astroquery.mast import Observations  # noqa: PLC0415
@@ -252,13 +271,12 @@ def _download_fits_kepler(kepid: int, fits_dir: Path) -> Path | None:
             "Install it with: pip install astroquery"
         ) from exc
 
-    target_name = f"kplr{kepid:09d}"
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         obs_table = Observations.query_criteria(
             target_name=target_name,
-            obs_collection="Kepler",
-            productSubGroupDescription="LLC",
+            obs_collection=obs_collection,
+            dataproduct_type=dataproduct_type,
         )
 
     if obs_table is None or len(obs_table) == 0:
@@ -269,7 +287,7 @@ def _download_fits_kepler(kepid: int, fits_dir: Path) -> Path | None:
         products = Observations.get_product_list(obs_table[0])
         lc_prods = Observations.filter_products(
             products,
-            productSubGroupDescription="LLC",
+            productSubGroupDescription=product_subgroup,
             extension="fits",
         )
 
@@ -289,112 +307,36 @@ def _download_fits_kepler(kepid: int, fits_dir: Path) -> Path | None:
 
     local_path = Path(manifest["Local Path"][0])
     return local_path if local_path.exists() else None
+
+
+def _download_fits_kepler(kepid: int, fits_dir: Path) -> Path | None:
+    """Download the long-cadence Kepler light curve for *kepid*."""
+    return _mast_download(
+        target_name=f"kplr{kepid:09d}",
+        obs_collection="Kepler",
+        fits_dir=fits_dir,
+        product_subgroup="LLC",
+    )
 
 
 def _download_fits_tess(tid: int, fits_dir: Path) -> Path | None:
-    """
-    Download a TESS light curve for TIC *tid* via astroquery.mast.
-    Returns the local path or None if no product is found.
-    """
-    try:
-        from astroquery.mast import Observations  # noqa: PLC0415
-    except ImportError as exc:
-        raise ImportError(
-            "astroquery is required for FITS download. "
-            "Install it with: pip install astroquery"
-        ) from exc
-
-    target_name = f"TIC {tid}"
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        obs_table = Observations.query_criteria(
-            target_name=target_name,
-            obs_collection="TESS",
-            dataproduct_type="timeseries",
-            productSubGroupDescription="LC",
-        )
-
-    if obs_table is None or len(obs_table) == 0:
-        return None
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        products = Observations.get_product_list(obs_table[0])
-        lc_prods = Observations.filter_products(
-            products,
-            productSubGroupDescription="LC",
-            extension="fits",
-        )
-
-    if lc_prods is None or len(lc_prods) == 0:
-        return None
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        manifest = Observations.download_products(
-            lc_prods[:1],
-            download_dir=str(fits_dir),
-            cache=True,
-        )
-
-    if manifest is None or len(manifest) == 0:
-        return None
-
-    local_path = Path(manifest["Local Path"][0])
-    return local_path if local_path.exists() else None
+    """Download a TESS light curve for TIC *tid*."""
+    return _mast_download(
+        target_name=f"TIC {tid}",
+        obs_collection="TESS",
+        fits_dir=fits_dir,
+        product_subgroup="LC",
+    )
 
 
 def _download_fits_k2(epic_id: int, fits_dir: Path) -> Path | None:
-    """
-    Download a K2 light curve for EPIC *epic_id* via astroquery.mast.
-    Returns the local path or None if no product is found.
-    """
-    try:
-        from astroquery.mast import Observations  # noqa: PLC0415
-    except ImportError as exc:
-        raise ImportError(
-            "astroquery is required for FITS download. "
-            "Install it with: pip install astroquery"
-        ) from exc
-
-    target_name = f"EPIC {epic_id}"
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        obs_table = Observations.query_criteria(
-            target_name=target_name,
-            obs_collection="K2",
-            dataproduct_type="timeseries",
-            productSubGroupDescription="LLC",
-        )
-
-    if obs_table is None or len(obs_table) == 0:
-        return None
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        products = Observations.get_product_list(obs_table[0])
-        lc_prods = Observations.filter_products(
-            products,
-            productSubGroupDescription="LLC",
-            extension="fits",
-        )
-
-    if lc_prods is None or len(lc_prods) == 0:
-        return None
-
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        manifest = Observations.download_products(
-            lc_prods[:1],
-            download_dir=str(fits_dir),
-            cache=True,
-        )
-
-    if manifest is None or len(manifest) == 0:
-        return None
-
-    local_path = Path(manifest["Local Path"][0])
-    return local_path if local_path.exists() else None
+    """Download a K2 light curve for EPIC *epic_id*."""
+    return _mast_download(
+        target_name=f"EPIC {epic_id}",
+        obs_collection="K2",
+        fits_dir=fits_dir,
+        product_subgroup="LLC",
+    )
 
 
 # ── Multi-mission Dataset ─────────────────────────────────────────────────────
@@ -614,78 +556,26 @@ class MultiMissionDataset(Dataset):
         return self._labels
 
 
-# ── Argument parser ───────────────────────────────────────────────────────────
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Train ExoNet on multi-mission data (Kepler/TESS/K2) and export to ONNX.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-    parser.add_argument(
-        "--epochs", type=int, default=50,
-        help="Number of training epochs.",
-    )
-    parser.add_argument(
-        "--patience", type=int, default=10,
-        help="Early stopping patience: stop if val AUC does not improve for this many epochs.",
-    )
-    parser.add_argument(
-        "--lr", type=float, default=1e-3,
-        help="Initial learning rate for AdamW.",
-    )
-    parser.add_argument(
-        "--batch-size", type=int, default=64,
-        help="Mini-batch size for train and validation loaders.",
-    )
-    parser.add_argument(
-        "--fits-dir", type=Path, required=True,
-        help="Directory for FITS cache (downloaded and/or pre-existing files).",
-    )
-    parser.add_argument(
-        "--output-dir", type=Path, required=True,
-        help="Directory where exonet.pt, exonet.onnx and threshold.json will be written.",
-    )
-    parser.add_argument(
-        "--val-split", type=float, default=0.15,
-        help="Fraction of data held out for validation (stratified).",
-    )
-    parser.add_argument(
-        "--max-samples", type=int, default=None,
-        help="Cap dataset size (useful for quick smoke-tests).",
-    )
-    parser.add_argument(
-        "--csv-path", type=Path, default=None,
-        help="Path to a local Kepler KOI CSV file. If omitted, all mission tables are downloaded from NASA.",
-    )
-    parser.add_argument(
-        "--num-workers", type=int, default=0,
-        help="DataLoader worker processes (set >0 for multi-process loading).",
-    )
-    parser.add_argument(
-        "--no-augment", action="store_true",
-        help="Disable data augmentation.",
-    )
-    return parser.parse_args(argv)
-
-
 # ── Training loop ─────────────────────────────────────────────────────────────
 
-def _pos_weight(labels: list[float], device: torch.device) -> torch.Tensor:
+def _make_sampler(labels: list[float]) -> WeightedRandomSampler:
     """
-    Compute the positive-class weight for BCEWithLogitsLoss.
+    Build a WeightedRandomSampler that draws each class with equal probability.
 
-    pos_weight = n_negative / n_positive
-
-    A higher weight penalises false negatives more, compensating for class
-    imbalance.  Clamped to [0.1, 100] to avoid numerical instability.
+    This ensures every mini-batch is ~50/50 pos/neg regardless of the true
+    class ratio, which is more effective than loss-weighting alone.
     """
     n_pos = sum(1 for l in labels if l == 1.0)
     n_neg = len(labels) - n_pos
-    if n_pos == 0:
-        return torch.tensor([1.0], device=device)
-    weight = n_neg / n_pos
-    weight = max(0.1, min(weight, 100.0))
-    return torch.tensor([weight], device=device)
+    w_pos = 1.0 / max(n_pos, 1)
+    w_neg = 1.0 / max(n_neg, 1)
+    weights = [w_pos if l == 1.0 else w_neg for l in labels]
+    return WeightedRandomSampler(weights, num_samples=len(weights), replacement=True)
+
+
+def _label_smooth(targets: torch.Tensor, smoothing: float = 0.05) -> torch.Tensor:
+    """Apply label smoothing: push labels away from hard 0/1 by *smoothing*/2."""
+    return targets * (1.0 - smoothing) + 0.5 * smoothing
 
 
 def _run_epoch(
@@ -694,6 +584,8 @@ def _run_epoch(
     criterion: nn.BCELoss,
     optimizer: torch.optim.Optimizer | None,
     device: torch.device,
+    label_smoothing: float = 0.05,
+    max_grad_norm: float = 1.0,
 ) -> tuple[float, list[float], list[float]]:
     """
     Run one epoch (train or eval).
@@ -702,6 +594,10 @@ def _run_epoch(
     ----------
     optimizer :
         If ``None`` the model is run in eval mode (validation pass).
+    label_smoothing :
+        Soft-labels strength (applied during training only).
+    max_grad_norm :
+        Gradient clipping max norm (applied during training only).
 
     Returns
     -------
@@ -723,11 +619,14 @@ def _run_epoch(
             labels = labels.to(device)
 
             scores = model(gv, lv, scalar)   # (B, 1)
-            loss   = criterion(scores, labels)
+
+            targets = _label_smooth(labels, label_smoothing) if is_train else labels
+            loss = criterion(scores, targets)
 
             if is_train:
                 optimizer.zero_grad()
                 loss.backward()
+                nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 optimizer.step()
 
             total_loss += loss.item() * len(labels)
@@ -777,8 +676,90 @@ def _tune_threshold(
 
 # ── Full training pipeline ────────────────────────────────────────────────────
 
+def _train_fold(
+    dataset: MultiMissionDataset,
+    train_idx: list[int],
+    val_idx: list[int],
+    args: argparse.Namespace,
+    device: torch.device,
+    pt_save_path: Path,
+) -> tuple[float, list[float], list[float]]:
+    """
+    Train one fold and return (best_val_auc, best_val_scores, best_val_labels).
+
+    The best checkpoint is saved to *pt_save_path* if it beats the previous
+    best (tracked externally).
+    """
+    train_labels = [dataset.labels[i] for i in train_idx]
+    sampler = _make_sampler(train_labels)
+
+    train_loader = DataLoader(
+        Subset(dataset, train_idx),
+        batch_size=args.batch_size,
+        sampler=sampler,          # balanced batches via WeightedRandomSampler
+        num_workers=args.num_workers,
+        pin_memory=False,
+        drop_last=False,
+    )
+    val_loader = DataLoader(
+        Subset(dataset, val_idx),
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=False,
+    )
+
+    model = ExoNet().to(device)
+    criterion = nn.BCELoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="max", factor=0.5, patience=5, min_lr=1e-6
+    )
+
+    best_val_auc = -1.0
+    best_val_scores: list[float] = []
+    best_val_labels: list[float] = []
+    epochs_no_improve = 0
+
+    print(f"\n  {'Epoch':>5}  {'Train Loss':>11}  {'Val Loss':>9}  {'Val AUC':>9}  {'LR':>10}")
+    print("  " + "-" * 53)
+
+    for epoch in range(1, args.epochs + 1):
+        train_loss, _, _ = _run_epoch(model, train_loader, criterion, optimizer, device)
+        val_loss, val_scores, val_labels_ep = _run_epoch(model, val_loader, criterion, None, device)
+
+        try:
+            val_auc = roc_auc_score(val_labels_ep, val_scores)
+        except ValueError:
+            val_auc = float("nan")
+
+        scheduler.step(val_auc if not (val_auc != val_auc) else 0.0)
+        current_lr = optimizer.param_groups[0]["lr"]
+
+        print(
+            f"  {epoch:>5}  {train_loss:>11.5f}  {val_loss:>9.5f}  "
+            f"{val_auc:>9.4f}  {current_lr:>10.2e}"
+        )
+
+        improved = not (val_auc != val_auc) and val_auc > best_val_auc
+        if improved:
+            best_val_auc = val_auc
+            best_val_scores = list(val_scores)
+            best_val_labels = list(val_labels_ep)
+            epochs_no_improve = 0
+            torch.save(model.state_dict(), pt_save_path)
+            print(f"         >> New best val AUC {best_val_auc:.4f} -- checkpoint saved.")
+        else:
+            epochs_no_improve += 1
+            if epochs_no_improve >= args.patience:
+                print(f"\n  Early stopping after {epoch} epochs (patience={args.patience}).")
+                break
+
+    return best_val_auc, best_val_scores, best_val_labels
+
+
 def train(args: argparse.Namespace) -> None:
-    """Full training pipeline."""
+    """Full training pipeline with k-fold cross-validation."""
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -795,128 +776,88 @@ def train(args: argparse.Namespace) -> None:
         print("ERROR: dataset contains fewer than 10 usable samples. Aborting.")
         sys.exit(1)
 
-    # Stratified train/val split
-    indices    = list(range(len(dataset)))
-    val_labels = dataset.labels
-
-    try:
-        train_idx, val_idx = train_test_split(
-            indices,
-            test_size=args.val_split,
-            stratify=val_labels,
-            random_state=42,
-        )
-    except ValueError:
-        # Fallback to non-stratified split if a class has too few samples
-        train_idx, val_idx = train_test_split(
-            indices,
-            test_size=args.val_split,
-            random_state=42,
-        )
-
-    train_set = Subset(dataset, train_idx)
-    val_set   = Subset(dataset, val_idx)
-
-    train_loader = DataLoader(
-        train_set,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=args.num_workers,
-        pin_memory=True,
-        drop_last=False,
-    )
-    val_loader = DataLoader(
-        val_set,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        pin_memory=True,
-    )
-
-    # ── Model, loss, optimiser, scheduler ────────────────────────────────────
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Training on {device}.")
+    print(f"\nTraining on {device}.")
 
-    model = ExoNet().to(device)
+    indices = np.array(range(len(dataset)))
+    labels  = np.array(dataset.labels)
+    pt_save_path   = output_dir / "exonet.pt"
+    onnx_save_path = output_dir / "exonet.onnx"
 
-    train_labels = [dataset.labels[i] for i in train_idx]
-    pw = _pos_weight(train_labels, device)
-    # BCELoss is used here; we manually scale the loss rather than using
-    # BCEWithLogitsLoss because the final model layer already applies Sigmoid.
-    # We achieve class weighting by multiplying the unreduced BCE output.
-    criterion_unreduced = nn.BCELoss(reduction="none")
+    # ── K-fold cross-validation ───────────────────────────────────────────────
+    n_splits = min(args.folds, int(min(np.sum(labels == 0), np.sum(labels == 1))))
+    n_splits = max(n_splits, 2)
 
-    def weighted_bce(scores: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        loss = criterion_unreduced(scores, targets)
-        # Apply pos_weight to positive examples only
-        weight = torch.where(targets == 1.0, pw.expand_as(targets), torch.ones_like(targets))
-        return (loss * weight).mean()
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
+    fold_aucs: list[float] = []
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=args.epochs, eta_min=1e-6
-    )
+    overall_best_auc   = -1.0
+    best_val_scores_all: list[float] = []
+    best_val_labels_all: list[float] = []
 
-    # ── Training loop ─────────────────────────────────────────────────────────
-    best_val_auc      = -1.0
-    best_val_scores: list[float] = []
-    best_val_labels: list[float] = []
-    epochs_no_improve = 0
-    pt_save_path      = output_dir / "exonet.pt"
-    onnx_save_path    = output_dir / "exonet.onnx"
+    for fold, (train_idx, val_idx) in enumerate(skf.split(indices, labels), start=1):
+        print(f"\n{'='*60}")
+        print(f"  Fold {fold}/{n_splits}  —  train={len(train_idx)}  val={len(val_idx)}")
+        print(f"{'='*60}")
 
-    print(
-        f"\n{'Epoch':>6}  {'Train Loss':>11}  {'Val Loss':>9}  {'Val AUC':>9}  {'LR':>10}"
-    )
-    print("-" * 55)
-
-    for epoch in range(1, args.epochs + 1):
-        train_loss, _, _ = _run_epoch(
-            model, train_loader, weighted_bce, optimizer, device
+        fold_auc, val_scores, val_labels_ep = _train_fold(
+            dataset,
+            train_idx.tolist(),
+            val_idx.tolist(),
+            args,
+            device,
+            pt_save_path,
         )
-        val_loss, val_scores, val_labels_ep = _run_epoch(
-            model, val_loader, weighted_bce, None, device
-        )
-        scheduler.step()
+        fold_aucs.append(fold_auc)
 
-        # AUC-ROC (only meaningful when both classes are present)
-        try:
-            val_auc = roc_auc_score(val_labels_ep, val_scores)
-        except ValueError:
-            val_auc = float("nan")
+        if fold_auc > overall_best_auc:
+            overall_best_auc = fold_auc
+            best_val_scores_all = val_scores
+            best_val_labels_all = val_labels_ep
 
-        current_lr = scheduler.get_last_lr()[0]
-        print(
-            f"{epoch:>6}  {train_loss:>11.5f}  {val_loss:>9.5f}  "
-            f"{val_auc:>9.4f}  {current_lr:>10.2e}"
-        )
+    mean_auc = float(np.mean(fold_aucs))
+    std_auc  = float(np.std(fold_aucs))
+    print(f"\n{'='*60}")
+    print(f"  Cross-validation complete.")
+    print(f"  Fold AUCs: {[f'{a:.4f}' for a in fold_aucs]}")
+    print(f"  Mean AUC-ROC: {mean_auc:.4f} ± {std_auc:.4f}")
+    print(f"  Best fold AUC: {overall_best_auc:.4f}")
+    print(f"  Best checkpoint: {pt_save_path}")
+    print(f"{'='*60}")
 
-        improved = not (val_auc != val_auc) and val_auc > best_val_auc  # NaN-safe
-        if improved:
-            best_val_auc = val_auc
-            best_val_scores = list(val_scores)
-            best_val_labels = list(val_labels_ep)
-            epochs_no_improve = 0
-            torch.save(model.state_dict(), pt_save_path)
-            print(f"         >> New best val AUC {best_val_auc:.4f} -- checkpoint saved.")
-        else:
-            epochs_no_improve += 1
-            if epochs_no_improve >= args.patience:
-                print(f"\nEarly stopping: val AUC has not improved for {args.patience} epochs.")
-                break
-
-    print(f"\nTraining complete.  Best val AUC-ROC: {best_val_auc:.4f}")
-    print(f"Best checkpoint: {pt_save_path}")
-
-    # ── Threshold tuning ──────────────────────────────────────────────────────
-    if best_val_scores and best_val_labels:
-        print("\nRunning threshold sweep on validation set ...")
-        _tune_threshold(best_val_scores, best_val_labels, output_dir)
+    # ── Threshold tuning on best fold's val set ───────────────────────────────
+    if best_val_scores_all and best_val_labels_all:
+        print("\nRunning threshold sweep on best fold's validation set ...")
+        _tune_threshold(best_val_scores_all, best_val_labels_all, output_dir)
 
     # ── ONNX export ───────────────────────────────────────────────────────────
     print("\nExporting best checkpoint to ONNX ...")
     ExoNetInference.export_from_pytorch(pt_save_path, onnx_save_path)
     print(f"ONNX model: {onnx_save_path}")
+
+
+# ── New CLI flags ─────────────────────────────────────────────────────────────
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Train ExoNet on multi-mission data (Kepler/TESS/K2) and export to ONNX.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--epochs",      type=int,   default=50)
+    parser.add_argument("--patience",    type=int,   default=10)
+    parser.add_argument("--lr",          type=float, default=1e-3)
+    parser.add_argument("--batch-size",  type=int,   default=64)
+    parser.add_argument("--folds",       type=int,   default=5,
+                        help="Number of stratified k-folds for cross-validation.")
+    parser.add_argument("--fits-dir",    type=Path,  required=True)
+    parser.add_argument("--output-dir",  type=Path,  required=True)
+    parser.add_argument("--val-split",   type=float, default=0.15,
+                        help="(Unused when --folds > 1; kept for compatibility.)")
+    parser.add_argument("--max-samples", type=int,   default=None)
+    parser.add_argument("--csv-path",    type=Path,  default=None)
+    parser.add_argument("--num-workers", type=int,   default=0)
+    parser.add_argument("--no-augment",  action="store_true")
+    return parser.parse_args(argv)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
