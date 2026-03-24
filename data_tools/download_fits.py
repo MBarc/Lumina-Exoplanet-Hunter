@@ -13,10 +13,19 @@ downloads in parallel without needing multiprocessing overhead.
 
 Thread count guidance
 ---------------------
-MAST does not publish a hard rate limit, but in practice anything above
-~15 simultaneous connections triggers throttling (HTTP 429 / connection
-resets). 8–10 threads is a safe default that keeps the pipeline near maximum
-throughput without getting blocked.
+MAST does not publish a documented rate limit or concurrent connection cap for
+general bulk downloads. The only hard, published limit is for TESScut (a
+separate cutout service), which restricts users to 5 requests/second.
+
+For large-scale downloads MAST recommends their AWS/cURL bulk download scripts
+which serve files directly from S3 and bypass the MAST HTTP servers entirely:
+  https://outerspace.stsci.edu/display/MASTDATA/JWST+AWS+Bulk+Download+Scripts
+
+In the absence of a published limit, the default here is min(cpu_count, 10).
+This is a conservative starting point — not an official ceiling. If you see
+HTTP 429 errors or repeated connection resets, reduce --threads. If downloads
+are completing cleanly you can try increasing it. Contact archive@stsci.edu
+if you need an authoritative limit for your use case.
 
 Resumability
 ------------
@@ -29,20 +38,24 @@ Usage (from the repo root)
     python data_tools/download_fits.py \\
         --mission kepler \\
         --output-dir fits_cache \\
-        --threads 10 \\
         --limit 50000
 
     python data_tools/download_fits.py \\
         --mission tess \\
-        --output-dir fits_cache \\
-        --threads 10
+        --output-dir fits_cache
 
-    # Download both missions back-to-back
+    # Download all three missions
     python data_tools/download_fits.py \\
         --mission all \\
         --output-dir fits_cache \\
-        --threads 10 \\
         --limit 100000
+
+    # Smoke test — 100 files to verify setup
+    python data_tools/download_fits.py \\
+        --mission kepler \\
+        --output-dir fits_cache \\
+        --threads 4 \\
+        --limit 100
 
 Requirements
 ------------
@@ -122,77 +135,77 @@ _MISSION_CONFIG: dict[str, dict] = {
 
 # ── Target list helpers ────────────────────────────────────────────────────────
 
-def _query_observation_ids(
+def _query_obs_table(
     mission_key: str,
     limit: int | None,
-) -> list[str]:
+):
     """
-    Query MAST for all observation IDs matching a mission.
+    Query MAST for all observations matching a mission.
 
-    Returns a list of obs_id strings that we can later use to fetch the
-    associated data products. The query is paged internally by astroquery
-    when there are more results than the default page size.
+    Returns an astropy Table so that we can pass rows (not bare strings)
+    to get_product_list — the API requires the full row objects, not just
+    the obs_id string values.
 
     Parameters
     ----------
     mission_key : One of "kepler", "k2", "tess".
-    limit       : Cap the result count (useful for testing). None = no cap.
+    limit       : Cap the row count (useful for testing). None = no cap.
     """
+    import random
     cfg = _MISSION_CONFIG[mission_key]
     log.info("Querying MAST for %s observations...", cfg["label"])
 
-    # query_criteria returns an astropy Table. We only need the obs_id column
-    # but MAST always returns the full metadata row — we just ignore the rest.
     table = Observations.query_criteria(
         obs_collection=cfg["obs_collection"],
         dataproduct_type=cfg["dataproduct_type"],
     )
 
-    obs_ids: list[str] = list(table["obs_id"])
+    log.info("  Found %s observations.", f"{len(table):,}")
 
-    log.info("  Found %s observations.", f"{len(obs_ids):,}")
-
-    if limit is not None and len(obs_ids) > limit:
-        # Shuffle before slicing so we get a representative sample across the
-        # sky rather than just the first chunk of the catalog (which tends to
-        # be biased toward bright, well-studied targets).
-        import random
-        random.shuffle(obs_ids)
-        obs_ids = obs_ids[:limit]
+    if limit is not None and len(table) > limit:
+        # Shuffle indices so we sample uniformly across the sky rather than
+        # pulling only the first chunk of the catalog (which tends to be
+        # biased toward bright, well-characterised targets).
+        indices = list(range(len(table)))
+        random.shuffle(indices)
+        table = table[indices[:limit]]
         log.info("  Capped to %s after shuffle.", f"{limit:,}")
 
-    return obs_ids
+    return table
 
 
 def _iter_download_urls(
-    obs_ids: list[str],
+    obs_table,
     mission_key: str,
-    batch_size: int = 500,
+    batch_size: int = 100,
 ) -> Iterator[tuple[str, str]]:
     """
-    Yield (url, filename) pairs for every light curve file in obs_ids.
+    Yield (uri, filename) pairs for every light curve file in obs_table.
 
-    MAST product queries can only handle a few hundred observation IDs at a
-    time before the request payload becomes unwieldy. We batch the obs_ids
-    and concatenate the results.
+    get_product_list accepts astropy Table rows directly. We process in
+    batches to keep individual HTTP request payloads small — large batches
+    have been observed to trigger "varchar to bigint" conversion errors on
+    the MAST backend.
 
     Parameters
     ----------
-    obs_ids    : List of observation IDs returned by _query_observation_ids.
+    obs_table  : astropy Table returned by _query_obs_table.
     mission_key: Mission key for filtering to the right file type.
-    batch_size : How many obs_ids to include in each product query.
+    batch_size : Rows per product query. 100 is conservative; increase to
+                 500 if MAST appears stable during your run.
     """
     cfg = _MISSION_CONFIG[mission_key]
     keyword = cfg["description_keyword"].lower()
 
-    total_batches = (len(obs_ids) + batch_size - 1) // batch_size
+    total_batches = (len(obs_table) + batch_size - 1) // batch_size
     log.info("Fetching product lists in %d batches of %d...", total_batches, batch_size)
 
     for batch_idx in range(total_batches):
-        chunk = obs_ids[batch_idx * batch_size : (batch_idx + 1) * batch_size]
+        chunk = obs_table[batch_idx * batch_size : (batch_idx + 1) * batch_size]
 
-        # get_product_list returns a Table of all data products for these
-        # observations. Each row has a 'dataURI' and 'description' column.
+        # get_product_list returns a Table of all data products (light curves,
+        # target pixel files, etc.) for these observations. We filter to only
+        # the file type we care about via the description keyword.
         try:
             products = Observations.get_product_list(chunk)
         except Exception as exc:
@@ -201,10 +214,15 @@ def _iter_download_urls(
             continue
 
         for row in products:
-            desc = str(row.get("description", "")).lower()
-            uri  = str(row.get("dataURI", ""))
+            # astropy Table rows use column-name indexing, not .get().
+            try:
+                desc = str(row["description"]).lower()
+                uri  = str(row["dataURI"])
+            except (KeyError, TypeError):
+                continue
+
             if keyword in desc and uri.endswith(".fits"):
-                # The filename is the last component of the URI path.
+                # The filename is the last path component of the URI.
                 # e.g. "mast:Kepler/url/path/kplr001234567_llc.fits"
                 filename = uri.split("/")[-1]
                 yield uri, filename
@@ -248,29 +266,25 @@ def _download_one(uri: str, filename: str, output_dir: Path) -> str:
         return "skipped"
 
     # --- Fetch from MAST via astroquery. ------------------------------------
-    # download_file returns a local path; we move it to our target location.
     # We write to a ".part" file first so that a partial download is never
     # mistaken for a complete one by a concurrent thread or a future run.
+    #
+    # download_file(uri, local_path=...) writes the file to the path we
+    # specify and returns a (status, msg, uri) tuple — NOT the path. We
+    # ignore the return value and use our own `part` path directly.
     part = dest.with_suffix(".fits.part")
     try:
-        local_path = Observations.download_file(uri, local_path=str(part))
-
-        # astroquery returns (status, msg, url) or just a path depending on
-        # the version. Normalise to a Path.
-        if isinstance(local_path, tuple):
-            local_path = local_path[0]
-
-        part_path = Path(str(local_path))
+        Observations.download_file(uri, local_path=str(part))
 
         # Quick sanity check: open the FITS header to confirm the file is
-        # valid. A corrupted partial download will raise an exception here,
-        # which we catch below.
-        with fits.open(str(part_path), memmap=False) as hdul:
-            _ = hdul[0].header  # just touching the header is enough
+        # valid and not a partial/corrupt download. This will raise an
+        # exception if the file is empty or malformed, which we catch below.
+        with fits.open(str(part), memmap=False) as hdul:
+            _ = hdul[0].header  # touching the header is enough
 
         # Atomic rename: on most OSes this is a single syscall, so no other
         # thread can observe a half-written file at the final path.
-        part_path.rename(dest)
+        part.rename(dest)
 
         with _counter_lock:
             _n_downloaded += 1
@@ -317,8 +331,8 @@ def run_download(
     all_targets: list[tuple[str, str]] = []   # list of (uri, filename)
 
     for mission in missions:
-        obs_ids = _query_observation_ids(mission, limit)
-        for uri, filename in _iter_download_urls(obs_ids, mission):
+        obs_table = _query_obs_table(mission, limit)
+        for uri, filename in _iter_download_urls(obs_table, mission):
             all_targets.append((uri, filename))
 
     if not all_targets:
@@ -429,9 +443,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=Path("fits_cache"),
         help="Local directory to save FITS files into.",
     )
-    # Cap the automatic default at 10 regardless of core count.
-    # Downloads are network-bound, not CPU-bound — beyond ~10 simultaneous
-    # connections MAST starts throttling rather than serving faster.
+    # Default to all logical cores, capped at 10 as a conservative starting
+    # point. MAST does not publish a concurrent connection limit — if you see
+    # HTTP 429s or connection resets, lower this. If downloads are clean,
+    # you can experiment with higher values.
     _default_threads = min(os.cpu_count() or 1, 10)
 
     parser.add_argument(
@@ -441,8 +456,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Number of parallel download threads. "
             f"Defaults to min(cpu_count, 10) = {_default_threads} on this machine. "
-            "8–12 is a safe range before MAST starts throttling. "
-            "Set lower on a slow connection."
+            "MAST does not publish a hard concurrent connection limit — reduce "
+            "if you encounter HTTP 429 errors or repeated connection resets."
         ),
     )
     parser.add_argument(
