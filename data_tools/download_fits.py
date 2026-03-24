@@ -429,12 +429,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=Path("fits_cache"),
         help="Local directory to save FITS files into.",
     )
+    # Cap the automatic default at 10 regardless of core count.
+    # Downloads are network-bound, not CPU-bound — beyond ~10 simultaneous
+    # connections MAST starts throttling rather than serving faster.
+    _default_threads = min(os.cpu_count() or 1, 10)
+
     parser.add_argument(
         "--threads",
         type=int,
-        default=10,
+        default=_default_threads,
         help=(
             "Number of parallel download threads. "
+            f"Defaults to min(cpu_count, 10) = {_default_threads} on this machine. "
             "8–12 is a safe range before MAST starts throttling. "
             "Set lower on a slow connection."
         ),
