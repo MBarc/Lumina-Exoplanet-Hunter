@@ -1,4 +1,10 @@
+import os as _os
 from dash import html, dcc, dash_table
+
+# Read CSS at import time and inject inline (Dash 4 doesn't auto-serve assets/)
+_CSS_PATH = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "assets", "lumina.css")
+with open(_CSS_PATH) as _f:
+    _CSS = _f.read()
 
 CANDIDATE_COLUMNS = [
     {"name": "TIC ID",      "id": "tic_id"},
@@ -14,7 +20,7 @@ CANDIDATE_COLUMNS = [
 ]
 
 TABLE_STYLE_HEADER = {
-    "backgroundColor": "#0d1f3c",
+    "backgroundColor": "#0a1a30",
     "color": "#00c8ff",
     "fontFamily": "Consolas, monospace",
     "fontSize": "10px",
@@ -36,10 +42,16 @@ TABLE_STYLE_DATA_CONDITIONAL = [
     {
         "if": {"filter_query": "{exonet_score} >= 80"},
         "borderLeft": "2px solid #06d6a0",
+        "backgroundColor": "rgba(6,214,160,0.04)",
     },
     {
         "if": {"filter_query": "{label} = FALSE_POSITIVE"},
         "color": "#4a6380",
+    },
+    {
+        "if": {"state": "selected"},
+        "backgroundColor": "rgba(0,200,255,0.08)",
+        "border": "1px solid rgba(0,200,255,0.3)",
     },
 ]
 
@@ -52,7 +64,7 @@ def _make_plotly_dark_layout(**kwargs):
         margin=dict(l=4, r=4, t=4, b=4),
         xaxis=dict(
             showgrid=True,
-            gridcolor="rgba(255,255,255,0.05)",
+            gridcolor="rgba(0,200,255,0.06)",
             gridwidth=1,
             zeroline=False,
             showticklabels=False,
@@ -60,7 +72,7 @@ def _make_plotly_dark_layout(**kwargs):
         ),
         yaxis=dict(
             showgrid=True,
-            gridcolor="rgba(255,255,255,0.05)",
+            gridcolor="rgba(0,200,255,0.06)",
             gridwidth=1,
             zeroline=False,
             showticklabels=False,
@@ -71,7 +83,39 @@ def _make_plotly_dark_layout(**kwargs):
     return base
 
 
+# Ticker items — duplicated so the scroll loops seamlessly
+_TICKER_ITEMS = [
+    ("MISSION", "LUMINA v1.0"),
+    ("STATUS", "OPERATIONAL"),
+    ("TELESCOPE", "KEPLER / TESS / K2"),
+    ("MODEL", "EXONET v2.0  ·  3M PARAMS"),
+    ("ALGORITHM", "BLS + RESIDUAL CNN"),
+    ("COVERAGE", "FULL-SKY PHOTOMETRY"),
+    ("PRECISION", "5-FOLD CROSS VALIDATION"),
+    ("TARGET", "EXOPLANET TRANSIT DETECTION"),
+]
+
+def _ticker_item(label, value):
+    return html.Span(className="ticker-item", children=[
+        html.Span(f"{label}: ", style={"color": "#2a4060"}),
+        html.Span(value, className="ticker-highlight"),
+    ])
+
+def _make_ticker():
+    items = [_ticker_item(l, v) for l, v in _TICKER_ITEMS]
+    sep = html.Span("◆", className="ticker-sep")
+    interleaved = []
+    for item in items:
+        interleaved.append(item)
+        interleaved.append(html.Span("◆", className="ticker-sep"))
+    # Duplicate for seamless loop
+    return html.Div(className="ticker-content", children=interleaved * 2)
+
+
 layout = html.Div(className="app-container", children=[
+    # Dummy store used to trigger CSS injection clientside callback
+    dcc.Store(id="_css-injector", data=0),
+
     # Intervals
     dcc.Interval(id="interval-1s",  interval=1_000,  n_intervals=0),
     dcc.Interval(id="interval-5s",  interval=5_000,  n_intervals=0),
@@ -80,7 +124,7 @@ layout = html.Div(className="app-container", children=[
     # Header
     html.Div(className="header", children=[
         html.Div(className="header-left", children=[
-            html.Span("\u25c8", style={"color": "#00c8ff", "fontSize": "18px", "textShadow": "0 0 12px #00c8ff"}),
+            html.Span("◈", className="header-diamond"),
             html.Span("LUMINA MISSION CONTROL", className="header-title"),
         ]),
         html.Div(className="header-right", children=[
@@ -94,8 +138,12 @@ layout = html.Div(className="app-container", children=[
 
         # Panel: Live Analysis (left, 2 rows)
         html.Div(className="panel panel-live", children=[
-            html.Div("LIVE ANALYSIS", className="panel-title"),
-            html.Div(id="live-tic-label", className="tic-label", children="AWAITING DATA"),
+            html.Div(className="panel-scanline"),
+            html.Div(className="panel-title", children=[
+                html.Span(className="live-dot"),
+                html.Span("LIVE ANALYSIS", className="panel-title-text"),
+            ]),
+            html.Div(id="live-tic-label", className="tic-label awaiting-signal", children="AWAITING SIGNAL"),
             dcc.Graph(
                 id="live-curve-graph",
                 config={"displayModeBar": False},
@@ -108,21 +156,22 @@ layout = html.Div(className="app-container", children=[
             html.Div(className="curve-stats", children=[
                 html.Div(children=[
                     html.Div("PERIOD", className="stat-chip-label"),
-                    html.Div(id="curve-stats-period", className="stat-chip-value", children="\u2014"),
+                    html.Div(id="curve-stats-period", className="stat-chip-value", children="—"),
                 ]),
                 html.Div(children=[
                     html.Div("DEPTH", className="stat-chip-label"),
-                    html.Div(id="curve-stats-depth", className="stat-chip-value", children="\u2014"),
+                    html.Div(id="curve-stats-depth", className="stat-chip-value", children="—"),
                 ]),
                 html.Div(children=[
                     html.Div("BLS", className="stat-chip-label"),
-                    html.Div(id="curve-stats-bls", className="stat-chip-value", children="\u2014"),
+                    html.Div(id="curve-stats-bls", className="stat-chip-value", children="—"),
                 ]),
             ]),
         ]),
 
         # Panel: Network Stats (center-top)
         html.Div(className="panel panel-network", children=[
+            html.Div(className="panel-scanline"),
             html.Div("EXONET NETWORK", className="panel-title"),
             html.Div(className="network-stat-grid", children=[
                 html.Div(className="network-stat-cell", children=[
@@ -146,6 +195,7 @@ layout = html.Div(className="app-container", children=[
 
         # Panel: Node Status (right, 2 rows)
         html.Div(className="panel panel-nodes", children=[
+            html.Div(className="panel-scanline"),
             html.Div("NODE STATUS", className="panel-title"),
             html.Div(id="node-list", children=[
                 html.Div("NO ACTIVE NODES", className="empty-state"),
@@ -154,9 +204,10 @@ layout = html.Div(className="app-container", children=[
 
         # Panel: Transit Detail (center-bottom)
         html.Div(className="panel panel-detail", children=[
+            html.Div(className="panel-scanline"),
             html.Div(className="detail-header", children=[
                 html.Span("TRANSIT SIGNATURE", className="panel-title",
-                          style={"border": "none", "padding": "0", "margin": "0"}),
+                          style={"border": "none", "padding": "0", "margin": "0", "flex": "1"}),
                 html.Span(id="detail-title-badge", className="score-badge badge-candidate",
                           children="NO DATA"),
             ]),
@@ -173,6 +224,7 @@ layout = html.Div(className="app-container", children=[
 
         # Panel: Candidates Table (bottom, full width)
         html.Div(className="panel panel-cands", children=[
+            html.Div(className="panel-scanline"),
             html.Div("RECENT TRANSIT CANDIDATES", className="panel-title"),
             dash_table.DataTable(
                 id="candidates-table",
@@ -191,5 +243,11 @@ layout = html.Div(className="app-container", children=[
                 sort_by=[{"column_id": "reported_at", "direction": "desc"}],
             ),
         ]),
+    ]),
+
+    # Mission ticker bar
+    html.Div(className="ticker-bar", children=[
+        html.Div("LUMINA", className="ticker-label"),
+        html.Div(className="ticker-track", children=[_make_ticker()]),
     ]),
 ])

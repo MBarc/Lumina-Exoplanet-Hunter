@@ -64,6 +64,8 @@ class TransitCandidate:
     bls_power: float     # BLS signal-detection efficiency (dimensionless)
     global_view: np.ndarray  # shape (N_GLOBAL_BINS,) — full-orbit phase curve
     local_view: np.ndarray   # shape (N_LOCAL_BINS,)  — transit-window zoom
+    secondary_depth: float = 0.0  # depth of strongest dip near phase 0.5
+    odd_even_diff: float = 0.0    # |mean_odd_depth − mean_even_depth|
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -259,6 +261,54 @@ def _bin_phase(
     return _normalise(binned)
 
 
+def _secondary_depth(
+    phase: np.ndarray,
+    flux: np.ndarray,
+    duration: float,
+    period: float,
+) -> float:
+    """
+    Measure the flux depth at the secondary-eclipse position (phase ±0.5).
+
+    Returns the depth as a positive fractional value (dip = positive).
+    """
+    half_window = min(2.0 * duration / period, 0.1)
+    near_half = np.abs(np.abs(phase) - 0.5) < half_window
+    if near_half.sum() < 3:
+        return 0.0
+    return float(-np.median(flux[near_half]))
+
+
+def _odd_even_diff(
+    time: np.ndarray,
+    flux: np.ndarray,
+    period: float,
+    t0: float,
+    duration: float,
+) -> float:
+    """
+    Absolute difference in mean transit depth between odd and even transits.
+
+    Computed by folding at 2× the period: odd transits land near phase 0,
+    even transits land near phase 0.5.
+    """
+    double_period = 2.0 * period
+    half_dur = duration / 2.0
+
+    # Phase in [-0.5, 0.5] at twice the period; transit 1 at 0, transit 2 at ±0.5
+    phase2 = ((time - t0) / double_period + 0.5) % 1.0 - 0.5
+
+    in_odd  = np.abs(phase2) < (half_dur / double_period + 0.01)
+    in_even = np.abs(np.abs(phase2) - 0.5) < (half_dur / double_period + 0.01)
+
+    if in_odd.sum() < 3 or in_even.sum() < 3:
+        return 0.0
+
+    depth_odd  = float(-np.median(flux[in_odd]))
+    depth_even = float(-np.median(flux[in_even]))
+    return float(abs(depth_odd - depth_even))
+
+
 def _fold_and_bin(
     time: np.ndarray,
     flux: np.ndarray,
@@ -331,17 +381,23 @@ def preprocess(
 
         results = []
         for c in candidates:
-            global_view, local_view = _fold_and_bin(
-                time, flux, c["period"], c["t0"], c["duration"]
-            )
+            period, t0, duration = c["period"], c["t0"], c["duration"]
+            phase = ((time - t0) / period + 0.5) % 1.0 - 0.5
+
+            global_view, local_view = _fold_and_bin(time, flux, period, t0, duration)
+            sec_depth = _secondary_depth(phase, flux, duration, period)
+            oe_diff   = _odd_even_diff(time, flux, period, t0, duration)
+
             results.append(TransitCandidate(
-                period      = c["period"],
-                t0          = c["t0"],
-                duration    = c["duration"],
-                depth       = c["depth"],
-                bls_power   = c["power"],
-                global_view = global_view,
-                local_view  = local_view,
+                period          = period,
+                t0              = t0,
+                duration        = duration,
+                depth           = c["depth"],
+                bls_power       = c["power"],
+                global_view     = global_view,
+                local_view      = local_view,
+                secondary_depth = sec_depth,
+                odd_even_diff   = oe_diff,
             ))
 
     return results

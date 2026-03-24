@@ -208,6 +208,7 @@ class ExoNetInference:
         normalisation is baked into the exported graph via ``ScalarBranch``.
         """
         import torch  # noqa: PLC0415  (deferred import intentional)
+        import torch.nn as nn  # noqa: PLC0415
         from ml.model import ExoNet  # noqa: PLC0415
 
         pt_path   = Path(pt_path)
@@ -219,13 +220,26 @@ class ExoNetInference:
         model.load_state_dict(state_dict)
         model.eval()
 
+        # Wrap with sigmoid so the ONNX graph outputs probabilities in [0, 1].
+        # The model itself outputs raw logits (for BCEWithLogitsLoss training).
+        class _WithSigmoid(nn.Module):
+            def __init__(self, inner: nn.Module) -> None:
+                super().__init__()
+                self._inner = inner
+                self._sig = nn.Sigmoid()
+            def forward(self, gv: torch.Tensor, lv: torch.Tensor, sc: torch.Tensor) -> torch.Tensor:
+                return self._sig(self._inner(gv, lv, sc))
+
+        export_model = _WithSigmoid(model)
+        export_model.eval()
+
         # Dummy inputs for tracing — batch size 1
         dummy_global  = torch.zeros(1, 1, 2001, dtype=torch.float32)
         dummy_local   = torch.zeros(1, 1, 201,  dtype=torch.float32)
-        dummy_scalar  = torch.zeros(1, 4,        dtype=torch.float32)
+        dummy_scalar  = torch.zeros(1, 6,        dtype=torch.float32)
 
         torch.onnx.export(
-            model,
+            export_model,
             (dummy_global, dummy_local, dummy_scalar),
             str(onnx_path),
             opset_version=18,

@@ -23,6 +23,12 @@ Installer/python-embed/
 # Training data and intermediate outputs (large, machine-generated)
 exonet-fits/
 exonet-output/
+fits_cache/
+training_runs/
+
+# ONNX model exports at repo root (large binaries; canonical copy lives in training_runs/)
+exonet.onnx
+exonet.onnx.data
 
 # Virtual environments
 venv/
