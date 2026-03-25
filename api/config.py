@@ -37,10 +37,12 @@ class Settings(BaseSettings):
     # public dashboard can display the current model without a code deploy.
     model_version: str = "ExoNet v2.0"
 
-    class Config:
-        # Load from a .env file when running locally outside Docker.
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+    model_config = {
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        # Allow "model_version" without conflicting with pydantic's "model_" namespace
+        "protected_namespaces": (),
+    }
 
 
 @lru_cache

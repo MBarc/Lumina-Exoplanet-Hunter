@@ -23,8 +23,7 @@ class Settings(BaseSettings):
     # How many seconds before a job is considered stalled
     job_timeout_seconds: int = 1800
 
-    class Config:
-        env_file = ".env"
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
 
 @lru_cache

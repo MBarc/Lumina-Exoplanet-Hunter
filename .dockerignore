@@ -1,0 +1,35 @@
+# Large data files — not needed inside the container
+exonet-fits/
+exonet-output/
+fits_cache/
+training_runs/
+
+# ONNX model binaries
+*.onnx
+*.onnx.data
+
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+.eggs/
+*.egg-info/
+
+# Installer artifacts
+Installer/build/
+Installer/dist/
+Installer/python-embed/
+
+# Secrets and local config
+.env
+
+# Git and IDE
+.git/
+.claude/
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db

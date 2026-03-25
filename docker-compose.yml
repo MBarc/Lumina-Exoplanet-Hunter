@@ -27,7 +27,7 @@ services:
       MONGODB_DB:  ${MONGODB_DB:-lumina}
       API_KEY:     ${API_KEY}
     ports:
-      - "8000:8000"
+      - "8001:8000"
     # Mount the source code so uvicorn --reload picks up changes without rebuild.
     # Remove this volume mount for production builds.
     volumes:

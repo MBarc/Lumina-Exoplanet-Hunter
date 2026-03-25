@@ -7,7 +7,7 @@ WORKDIR /app
 
 # Install dependencies first so Docker caches this layer separately from the
 # application code. Changing app code won't invalidate the pip install layer.
-COPY requirements.txt .
+COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ── Application layer ──────────────────────────────────────────────────────────
