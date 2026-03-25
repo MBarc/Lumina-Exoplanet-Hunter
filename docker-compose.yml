@@ -1,0 +1,76 @@
+version: "3.9"
+
+# ── Lumina local development stack ─────────────────────────────────────────────
+#
+# Starts two containers:
+#   mongo  — MongoDB 7 database with a named volume for persistence
+#   api    — FastAPI application, auto-reloads on code changes
+#
+# Usage:
+#   docker compose up --build       # first run (builds the API image)
+#   docker compose up               # subsequent runs
+#   docker compose down             # stop and remove containers
+#   docker compose down -v          # also wipe the MongoDB data volume
+#
+# The API is available at http://localhost:8000
+# Interactive docs at    http://localhost:8000/docs
+#
+# AWS note:
+#   In production, replace the mongo service with your AWS DocumentDB or
+#   MongoDB Atlas connection string via the MONGODB_URI environment variable
+#   on the api service. The mongo service is only for local development.
+
+services:
+
+  # ── MongoDB ──────────────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: lumina
+    volumes:
+      # Named volume keeps data between `docker compose down` / `up` cycles.
+      # Run `docker compose down -v` to wipe it for a clean start.
+      - mongo_data:/data/db
+    ports:
+      # Expose MongoDB locally so you can connect with MongoDB Compass or
+      # mongosh for debugging. Remove this in production.
+      - "27017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── FastAPI ───────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy   # wait for MongoDB to pass its health check
+    environment:
+      # All settings are injected via env vars — no secrets in the image.
+      # Override any of these in a .env file (see .env.example).
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DB:  lumina
+      API_KEY:     ${API_KEY:-dev-insecure-key}
+    ports:
+      - "8000:8000"
+    # Mount the source code so uvicorn --reload picks up changes without rebuild.
+    # Remove this volume mount for production builds.
+    volumes:
+      - .:/app
+    command: >
+      uvicorn api.main:app
+        --host 0.0.0.0
+        --port 8000
+        --reload
+        --reload-dir /app/api
+
+volumes:
+  mongo_data:
+    driver: local

@@ -30,6 +30,9 @@ training_runs/
 exonet.onnx
 exonet.onnx.data
 
+# Local environment secrets — never commit real credentials
+.env
+
 # Virtual environments
 venv/
 .venv/
