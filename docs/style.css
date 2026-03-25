@@ -1,0 +1,360 @@
+/* ── Reset & base ──────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { height: 100%; scroll-behavior: smooth; }
+body {
+  min-height: 100%;
+  background: #04090f;
+  color: #e8f4ff;
+  font-family: 'Trebuchet MS', 'Segoe UI', Arial, sans-serif;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+}
+
+/* ── Starfield canvas ────────────────────────────────────────────── */
+#starfield {
+  position: fixed; top: 0; left: 0;
+  width: 100%; height: 100%;
+  pointer-events: none; z-index: 0;
+  opacity: 0.7;
+}
+
+/* ── Header ──────────────────────────────────────────────────────── */
+.header {
+  position: relative; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 32px; height: 56px; flex-shrink: 0;
+  background: rgba(4, 9, 15, 0.97);
+  border-bottom: 1px solid rgba(0,200,255,0.4);
+  box-shadow: 0 2px 40px rgba(0,200,255,0.15), 0 0 80px rgba(0,200,255,0.04);
+}
+.header::after {
+  content: '';
+  position: absolute; bottom: -1px; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, #00c8ff 30%, #00c8ff 70%, transparent);
+  opacity: 0.35;
+}
+.header-left  { display: flex; align-items: center; gap: 14px; }
+.header-right { display: flex; align-items: center; gap: 16px; }
+
+.header-diamond {
+  color: #00c8ff; font-size: 20px;
+  text-shadow: 0 0 14px #00c8ff;
+  animation: diamond-pulse 2s ease-in-out infinite;
+}
+@keyframes diamond-pulse {
+  0%, 100% { transform: scale(1);   text-shadow: 0 0 14px #00c8ff; }
+  50%       { transform: scale(1.2); text-shadow: 0 0 28px #00c8ff, 0 0 50px rgba(0,200,255,0.5); }
+}
+
+.header-title {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 15px; font-weight: bold;
+  letter-spacing: 0.4em; color: #00c8ff;
+  text-shadow: 0 0 20px rgba(0,200,255,0.8), 0 0 40px rgba(0,200,255,0.3);
+  animation: title-glow 3s ease-in-out infinite;
+}
+@keyframes title-glow {
+  0%, 100% { text-shadow: 0 0 20px rgba(0,200,255,0.8), 0 0 40px rgba(0,200,255,0.3); }
+  50%       { text-shadow: 0 0 30px rgba(0,200,255,1.0), 0 0 60px rgba(0,200,255,0.5); }
+}
+.header-subtitle {
+  font-family: 'Consolas', monospace; font-size: 10px;
+  color: #2a4060; letter-spacing: 0.3em;
+}
+.utc-clock {
+  font-family: 'Consolas', monospace; font-size: 12px;
+  color: #ffd166; text-shadow: 0 0 8px rgba(255,209,102,0.4);
+}
+
+/* ── Status badge ────────────────────────────────────────────────── */
+.status-badge {
+  border: 1px solid; border-radius: 3px;
+  padding: 2px 10px;
+  font-family: 'Consolas', monospace; font-size: 10px;
+  letter-spacing: 0.12em; font-weight: bold;
+}
+.badge-connecting { border-color: #4a6380; color: #4a6380; background: rgba(74,99,128,0.1); }
+.badge-online     { border-color: #06d6a0; color: #06d6a0; background: rgba(6,214,160,0.1);
+                    text-shadow: 0 0 6px rgba(6,214,160,0.5);
+                    animation: badge-glow-green 3s ease-in-out infinite; }
+.badge-error      { border-color: #ff4d6d; color: #ff4d6d; background: rgba(255,77,109,0.1); }
+@keyframes badge-glow-green {
+  0%,100% { box-shadow: 0 0 6px rgba(6,214,160,0.2); }
+  50%     { box-shadow: 0 0 14px rgba(6,214,160,0.5); }
+}
+
+/* ── Stats row ───────────────────────────────────────────────────── */
+.stats-row {
+  position: relative; z-index: 1;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  border-bottom: 1px solid rgba(0,200,255,0.1);
+  background: rgba(0,200,255,0.06);
+}
+.stat-card {
+  background: rgba(4, 9, 15, 0.92);
+  padding: 24px 32px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  border-right: 1px solid rgba(0,200,255,0.06);
+  transition: background 0.3s ease;
+}
+.stat-card:last-child { border-right: none; }
+.stat-card:hover { background: rgba(10, 20, 40, 0.97); }
+.stat-number {
+  font-family: 'Consolas', monospace;
+  font-size: 42px; font-weight: bold; line-height: 1;
+  transition: all 0.6s ease;
+}
+.stat-number.gold   { color: #ffd166; text-shadow: 0 0 24px rgba(255,209,102,0.6); }
+.stat-number.cyan   { color: #00c8ff; text-shadow: 0 0 24px rgba(0,200,255,0.7); }
+.stat-number.green  { color: #06d6a0; text-shadow: 0 0 24px rgba(6,214,160,0.6); }
+.stat-number.purple { color: #a855f7; text-shadow: 0 0 24px rgba(168,85,247,0.6); }
+.stat-label {
+  font-family: 'Consolas', monospace; font-size: 9px;
+  color: #4a6380; letter-spacing: 0.2em; text-transform: uppercase;
+}
+
+/* ── Main grid ───────────────────────────────────────────────────── */
+.main-grid {
+  position: relative; z-index: 1;
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "candidates about"
+    "activity   leaderboard";
+  gap: 10px; padding: 10px;
+  flex: 1;
+}
+
+/* ── Panels ──────────────────────────────────────────────────────── */
+.panel {
+  background: rgba(13, 31, 60, 0.82);
+  border: 1px solid rgba(0,200,255,0.15);
+  border-radius: 3px; padding: 16px;
+  display: flex; flex-direction: column;
+  position: relative; overflow: hidden;
+  backdrop-filter: blur(4px);
+  transition: border-color 0.4s, box-shadow 0.4s;
+  box-shadow: 0 0 28px rgba(0,200,255,0.04), inset 0 0 60px rgba(0,0,0,0.4);
+}
+.panel:hover {
+  border-color: rgba(0,200,255,0.28);
+  box-shadow: 0 0 40px rgba(0,200,255,0.08), inset 0 0 60px rgba(0,0,0,0.4);
+}
+/* Corner accents */
+.panel::before {
+  content: ''; position: absolute; top: 0; left: 0;
+  width: 24px; height: 2px;
+  background: linear-gradient(90deg, #00c8ff, transparent); opacity: 0.8;
+}
+.panel::after {
+  content: ''; position: absolute; top: 0; left: 0;
+  width: 2px; height: 24px;
+  background: linear-gradient(180deg, #00c8ff, transparent); opacity: 0.8;
+}
+.panel-scanline {
+  position: absolute; inset: 0;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 3px,
+    rgba(0,0,0,0.05) 3px, rgba(0,0,0,0.05) 4px
+  );
+  pointer-events: none; z-index: 0; border-radius: 3px;
+}
+
+.panel-candidates  { grid-area: candidates; min-height: 320px; }
+.panel-about       { grid-area: about; }
+.panel-activity    { grid-area: activity; min-height: 180px; }
+.panel-leaderboard { grid-area: leaderboard; }
+
+/* ── Panel titles ────────────────────────────────────────────────── */
+.panel-title {
+  position: relative; z-index: 1;
+  font-family: 'Consolas', monospace; font-size: 10px; font-weight: bold;
+  letter-spacing: 0.3em; color: #00c8ff; text-transform: uppercase;
+  border-bottom: 1px solid rgba(0,200,255,0.12);
+  padding-bottom: 8px; margin-bottom: 12px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px;
+}
+.panel-title-sub { color: #2a4060; font-size: 9px; letter-spacing: 0.15em; }
+
+/* Live dot */
+.live-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #06d6a0; box-shadow: 0 0 6px #06d6a0;
+  flex-shrink: 0;
+  animation: live-blink 1.4s ease-in-out infinite;
+}
+@keyframes live-blink {
+  0%,100% { opacity: 1; box-shadow: 0 0 6px #06d6a0; }
+  50%     { opacity: 0.2; box-shadow: none; }
+}
+
+/* ── Candidate list ──────────────────────────────────────────────── */
+.candidate-list {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; gap: 6px;
+  overflow-y: auto; flex: 1;
+}
+.candidate-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center; gap: 12px;
+  padding: 8px 10px;
+  background: rgba(0,0,0,0.25);
+  border: 1px solid rgba(255,255,255,0.04);
+  border-radius: 2px;
+  transition: background 0.2s, border-color 0.2s;
+}
+.candidate-row:hover {
+  background: rgba(0,200,255,0.04);
+  border-color: rgba(0,200,255,0.15);
+}
+.candidate-row.strong { border-left: 2px solid #06d6a0; }
+.candidate-tic {
+  font-family: 'Consolas', monospace; font-size: 11px; color: #ffd166;
+}
+.candidate-meta {
+  font-family: 'Consolas', monospace; font-size: 9px; color: #4a6380;
+}
+.candidate-score {
+  font-family: 'Consolas', monospace; font-size: 13px; font-weight: bold;
+}
+.score-high { color: #06d6a0; text-shadow: 0 0 8px rgba(6,214,160,0.5); }
+.score-mid  { color: #ffd166; text-shadow: 0 0 8px rgba(255,209,102,0.4); }
+.score-low  { color: #4a6380; }
+.candidate-node {
+  font-family: 'Consolas', monospace; font-size: 9px; color: #2a4060;
+  text-align: right;
+}
+
+/* ── About panel ─────────────────────────────────────────────────── */
+.about-text {
+  position: relative; z-index: 1;
+  font-size: 12px; color: #8aa0b8; line-height: 1.7;
+  margin-bottom: 20px;
+}
+.about-stats {
+  position: relative; z-index: 1;
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 8px; margin-bottom: 20px;
+}
+.about-stat {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid rgba(0,200,255,0.08);
+  border-radius: 2px; padding: 10px;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.about-stat-value {
+  font-family: 'Consolas', monospace; font-size: 18px; font-weight: bold;
+  color: #00c8ff; text-shadow: 0 0 12px rgba(0,200,255,0.5);
+}
+.about-stat-label {
+  font-family: 'Consolas', monospace; font-size: 8px;
+  color: #4a6380; letter-spacing: 0.15em;
+}
+.cta-button {
+  position: relative; z-index: 1;
+  display: block; text-align: center;
+  padding: 12px 24px;
+  background: rgba(0,200,255,0.08);
+  border: 1px solid rgba(0,200,255,0.4);
+  border-radius: 3px;
+  color: #00c8ff; text-decoration: none;
+  font-family: 'Consolas', monospace; font-size: 11px;
+  letter-spacing: 0.2em; font-weight: bold;
+  text-shadow: 0 0 10px rgba(0,200,255,0.5);
+  transition: background 0.3s, box-shadow 0.3s, border-color 0.3s;
+}
+.cta-button:hover {
+  background: rgba(0,200,255,0.16);
+  border-color: rgba(0,200,255,0.7);
+  box-shadow: 0 0 20px rgba(0,200,255,0.2);
+}
+
+/* ── Leaderboard ─────────────────────────────────────────────────── */
+.leaderboard {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; gap: 4px; flex: 1;
+}
+.lb-row {
+  display: grid; grid-template-columns: 20px 1fr auto auto;
+  align-items: center; gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+.lb-rank {
+  font-family: 'Consolas', monospace; font-size: 9px; color: #2a4060;
+}
+.lb-rank.top { color: #ffd166; }
+.lb-name  { font-family: 'Consolas', monospace; font-size: 11px; color: #e8f4ff; }
+.lb-stars { font-family: 'Consolas', monospace; font-size: 9px; color: #4a6380; }
+.lb-bar-wrap { width: 60px; }
+.lb-bar-bg { background: rgba(255,255,255,0.06); height: 3px; border-radius: 2px; }
+.lb-bar-fg { height: 3px; border-radius: 2px; background: #00c8ff; transition: width 0.6s ease; }
+
+/* ── Activity chart ──────────────────────────────────────────────── */
+.activity-canvas {
+  position: relative; z-index: 1;
+  width: 100%; flex: 1; min-height: 0;
+  display: block;
+}
+
+/* ── Ticker ──────────────────────────────────────────────────────── */
+.ticker-bar {
+  position: relative; z-index: 10;
+  height: 26px; flex-shrink: 0;
+  background: rgba(0, 10, 20, 0.97);
+  border-top: 1px solid rgba(0,200,255,0.18);
+  display: flex; align-items: center; overflow: hidden;
+}
+.ticker-label {
+  padding: 0 12px; height: 100%;
+  display: flex; align-items: center;
+  background: #00c8ff; color: #04090f;
+  font-family: 'Consolas', monospace; font-size: 9px;
+  font-weight: bold; letter-spacing: 0.25em;
+  flex-shrink: 0; white-space: nowrap;
+}
+.ticker-track { flex: 1; overflow: hidden; }
+.ticker-content {
+  display: flex; white-space: nowrap;
+  animation: ticker-scroll 40s linear infinite;
+}
+.ticker-item {
+  font-family: 'Consolas', monospace; font-size: 9px;
+  color: #4a6380; letter-spacing: 0.12em; padding: 0 32px; flex-shrink: 0;
+}
+.ticker-highlight { color: #00c8ff; }
+.ticker-sep { color: rgba(0,200,255,0.3); padding: 0 4px; }
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* ── Empty state ─────────────────────────────────────────────────── */
+.empty-state {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  color: #2a4060; font-family: 'Consolas', monospace; font-size: 11px;
+  letter-spacing: 0.1em;
+  animation: empty-pulse 3s ease-in-out infinite;
+}
+@keyframes empty-pulse {
+  0%,100% { opacity: 0.5; }
+  50%     { opacity: 1.0; }
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,200,255,0.2); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,200,255,0.4); }
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+  .main-grid { grid-template-columns: 1fr; grid-template-areas: "candidates" "about" "leaderboard" "activity"; }
+  .stat-number { font-size: 28px; }
+}

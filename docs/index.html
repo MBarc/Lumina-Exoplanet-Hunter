@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lumina — Mission Control</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Starfield canvas rendered by JS -->
+  <canvas id="starfield"></canvas>
+
+  <!-- ── Header ───────────────────────────────────────────────────── -->
+  <header class="header">
+    <div class="header-left">
+      <span class="header-diamond">◈</span>
+      <span class="header-title">LUMINA</span>
+      <span class="header-subtitle">MISSION CONTROL</span>
+    </div>
+    <div class="header-right">
+      <span id="clock" class="utc-clock"></span>
+      <span id="network-status" class="status-badge badge-connecting">CONNECTING</span>
+    </div>
+  </header>
+
+  <!-- ── Hero stats row ────────────────────────────────────────────── -->
+  <section class="stats-row">
+    <div class="stat-card">
+      <div id="stat-nodes"      class="stat-number gold">—</div>
+      <div class="stat-label">ACTIVE NODES</div>
+    </div>
+    <div class="stat-card">
+      <div id="stat-stars"      class="stat-number cyan">—</div>
+      <div class="stat-label">STARS ANALYZED</div>
+    </div>
+    <div class="stat-card">
+      <div id="stat-candidates" class="stat-number green">—</div>
+      <div class="stat-label">CANDIDATES FOUND</div>
+    </div>
+    <div class="stat-card">
+      <div id="stat-compute"    class="stat-number purple">—</div>
+      <div class="stat-label">COMPUTE HOURS</div>
+    </div>
+  </section>
+
+  <!-- ── Main grid ─────────────────────────────────────────────────── -->
+  <main class="main-grid">
+
+    <!-- Recent high-confidence candidates -->
+    <section class="panel panel-candidates">
+      <div class="panel-scanline"></div>
+      <div class="panel-title">
+        <span class="live-dot"></span>
+        <span>RECENT CANDIDATES</span>
+      </div>
+      <div id="candidate-list" class="candidate-list">
+        <div class="empty-state">AWAITING SIGNAL</div>
+      </div>
+    </section>
+
+    <!-- Mission info + CTA -->
+    <section class="panel panel-about">
+      <div class="panel-scanline"></div>
+      <div class="panel-title">ABOUT THE MISSION</div>
+      <p class="about-text">
+        Lumina is a distributed citizen-science platform hunting for exoplanet
+        transits in Kepler, K2, and TESS photometry. Contributors install the
+        Lumina client on their machines, which automatically downloads light
+        curves, runs the ExoNet neural network, and reports candidates back to
+        the network.
+      </p>
+      <div class="about-stats">
+        <div class="about-stat">
+          <span class="about-stat-value" id="about-missions">3</span>
+          <span class="about-stat-label">MISSIONS</span>
+        </div>
+        <div class="about-stat">
+          <span class="about-stat-value" id="about-model">AUC 0.81</span>
+          <span class="about-stat-label">MODEL ACCURACY</span>
+        </div>
+        <div class="about-stat">
+          <span class="about-stat-value" id="about-params">3M</span>
+          <span class="about-stat-label">PARAMETERS</span>
+        </div>
+      </div>
+      <a class="cta-button"
+         href="https://github.com/MBarc/Lumina-Exoplanet-Hunter/releases/latest"
+         target="_blank" rel="noopener">
+        JOIN THE MISSION  →
+      </a>
+    </section>
+
+    <!-- Top contributors leaderboard -->
+    <section class="panel panel-leaderboard">
+      <div class="panel-scanline"></div>
+      <div class="panel-title">TOP CONTRIBUTORS</div>
+      <div id="leaderboard" class="leaderboard">
+        <div class="empty-state">AWAITING DATA</div>
+      </div>
+    </section>
+
+    <!-- Network activity chart (canvas sparkline) -->
+    <section class="panel panel-activity">
+      <div class="panel-scanline"></div>
+      <div class="panel-title">NETWORK ACTIVITY  <span class="panel-title-sub">— candidates / hour</span></div>
+      <canvas id="activity-chart" class="activity-canvas"></canvas>
+    </section>
+
+  </main>
+
+  <!-- ── Ticker ────────────────────────────────────────────────────── -->
+  <footer class="ticker-bar">
+    <div class="ticker-label">LUMINA</div>
+    <div class="ticker-track">
+      <div id="ticker-content" class="ticker-content"></div>
+    </div>
+  </footer>
+
+  <script src="main.js"></script>
+</body>
+</html>
