@@ -55,8 +55,12 @@ app.add_middleware(
 # Worker-facing write endpoints (queue, candidates, telemetry) require an
 # X-API-Key header. Public read endpoints (stats, stars) are open.
 
+# Routes open to everyone regardless of method
 _PUBLIC_PREFIXES = ("/health", "/docs", "/openapi", "/stats", "/stars", "/nodes",
                     "/queue/status", "/admin/scheduler/log")
+
+# GET-only public routes — read access is open, writes still require a key
+_PUBLIC_GET_PREFIXES = ("/candidates",)
 
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
@@ -65,11 +69,16 @@ async def require_api_key(request: Request, call_next):
 
     Public routes (stats, stars, health check, docs) are accessible without
     a key so the GitHub Pages site and anonymous browsers can read them.
+    GET /candidates is also public so the Mission Control site can display
+    recent finds — POST /candidates (worker submissions) still requires a key.
     Write routes require the X-API-Key header to prevent anyone from
     polluting the database.
     """
     path = request.url.path
     if any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+        return await call_next(request)
+
+    if request.method == "GET" and any(path.startswith(p) for p in _PUBLIC_GET_PREFIXES):
         return await call_next(request)
 
     key = request.headers.get("X-API-Key", "")
