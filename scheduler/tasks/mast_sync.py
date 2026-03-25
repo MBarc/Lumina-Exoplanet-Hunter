@@ -1,13 +1,25 @@
 """
 MAST sync task — discovers new observations and populates the work queue.
 
-Runs every 24 hours. For each supported mission it queries the MAST catalog
-for observations not yet in our queue and sends them to POST /queue/populate.
+Runs every 24 hours. Issues a single broad query to MAST for ALL timeseries
+observations across every mission, then selects only photometric light curve
+products using the structured `productSubGroupDescription` field.
 
-TESS releases a new sector of sky roughly every 27 days, so daily polling
-ensures new sectors appear in the queue within 24 hours of MAST ingestion.
-Kepler and K2 are complete archives — after the initial backlog is loaded
-this task will mostly find nothing new, which is fine.
+Why this works
+--------------
+MAST uses a controlled vocabulary for productSubGroupDescription. Every
+photometric light curve product in the archive — regardless of mission —
+ends with "LC":
+
+  LC   →  TESS light curves
+  LLC  →  Kepler / K2 long cadence light curves
+  SLC  →  Kepler / K2 short cadence light curves
+
+This is not a free-text keyword match. It is a structured field that MAST
+applies consistently. Any future photometry mission (Roman, Plato, etc.)
+onboarded to MAST will almost certainly follow the same convention, meaning
+new missions are picked up automatically on the next 24-hour sync with no
+code changes required.
 """
 
 from __future__ import annotations
@@ -21,72 +33,98 @@ from scheduler.config import get_settings
 
 log = logging.getLogger(__name__)
 
-# Missions and the MAST product keyword that identifies light curve files
-_MISSIONS = {
-    "kepler": {
-        "obs_collection":    "Kepler",
-        "dataproduct_type":  "timeseries",
-        "description_kw":    "long cadence",
-    },
-    "k2": {
-        "obs_collection":    "K2",
-        "dataproduct_type":  "timeseries",
-        "description_kw":    "light curve",
-    },
-    "tess": {
-        "obs_collection":    "TESS",
-        "dataproduct_type":  "timeseries",
-        "description_kw":    "light curves",
-    },
-}
 
-
-async def _get_existing_keys(client: httpx.AsyncClient) -> set[str]:
+def _extract_target_id(uri: str, obs_id: str) -> str:
     """
-    Fetch the set of (tic_id, mission, sector) keys already in the queue.
+    Best-effort extraction of a numeric target identifier from a FITS URI.
 
-    Used to skip duplicates before sending the populate request, keeping
-    the payload small and avoiding unnecessary 409-equivalent skips on
-    the API side.
+    Different missions encode the target in their filenames differently:
+      Kepler/K2:  kplr009002278_llc.fits   →  "9002278"
+      TESS:       tess...-0000000260647166-...fits  →  "260647166"
+      Future:     anything else  →  fall back to obs_id from the parent row
+
+    We strip known mission prefixes then pull the first uninterrupted run
+    of digits, which is the TIC / KIC / EPIC ID. Leading zeros are removed.
     """
+    filename = uri.split("/")[-1]
+    stem = filename.split(".")[0]  # drop extension
+
+    # Strip known mission-specific filename prefixes
+    for prefix in ("tess", "kplr", "ktwo", "hlsp"):
+        if stem.lower().startswith(prefix):
+            stem = stem[len(prefix):]
+            break
+
+    # Extract the first digit run after stripping separators
+    digits = ""
+    for ch in stem.lstrip("0_-"):
+        if ch.isdigit():
+            digits += ch
+        elif digits:
+            break  # stop at the first non-digit after we've collected some
+
+    # Fall back to obs_id (the parent observation identifier) for any mission
+    # whose filename format we don't recognise yet.
+    return digits or obs_id or filename
+
+
+def _extract_sector(uri: str, obs_collection: str) -> int | None:
+    """
+    Extract a sector / campaign / quarter number from the FITS URI path.
+
+    MAST encodes the observing segment in the directory structure:
+      TESS:  .../s0001/...  (sector)
+      K2:    .../c001/...   (campaign)
+
+    Kepler quarters are not encoded in the URI path — return None.
+    Unknown future missions also return None rather than guessing.
+    """
+    for part in uri.lower().split("/"):
+        if part.startswith("s") and part[1:].isdigit():
+            return int(part[1:])   # TESS sector
+        if part.startswith("c") and part[1:].isdigit():
+            return int(part[1:])   # K2 campaign
+    return None
+
+
+def _query_all_lightcurves() -> list[dict]:
+    """
+    Query MAST for every timeseries light curve product across all missions.
+
+    Steps:
+      1. Single broad MAST query — all dataproduct_type=timeseries, no
+         collection filter.
+      2. Fetch product lists in batches of 100 observations.
+      3. Keep only products where productSubGroupDescription ends with "LC"
+         and the file is a FITS file.
+      4. Build a lookup from obs_id → obs_collection so each product row
+         knows which mission it belongs to, without re-querying MAST.
+
+    Returns a flat list of target dicts ready to POST to /queue/populate.
+    """
+    log.info("Querying MAST for all timeseries observations (no collection filter)...")
     try:
-        resp = await client.get("/queue/status")
-        resp.raise_for_status()
-        data = resp.json()
-        return set(data.get("existing_keys", []))
+        table = Observations.query_criteria(dataproduct_type="timeseries")
     except Exception as e:
-        log.warning("Could not fetch existing queue keys: %s", e)
-        return set()
-
-
-def _query_mast_observations(mission_key: str) -> list[dict]:
-    """
-    Query MAST for all observations for one mission.
-
-    Returns a list of dicts with the fields we need to build queue documents.
-    Uses astroquery which handles MAST pagination automatically.
-    """
-    cfg = _MISSIONS[mission_key]
-    log.info("Querying MAST for %s observations...", mission_key)
-
-    try:
-        table = Observations.query_criteria(
-            obs_collection  = cfg["obs_collection"],
-            dataproduct_type = cfg["dataproduct_type"],
-        )
-    except Exception as e:
-        log.error("MAST query failed for %s: %s", mission_key, e)
+        log.error("MAST query failed: %s", e)
         return []
 
-    log.info("  %s: found %d observations", mission_key, len(table))
+    log.info("  Found %d total timeseries observations across all missions", len(table))
 
-    # Pull product lists in batches to find the actual FITS file URIs
-    keyword  = cfg["description_kw"]
-    targets  = []
+    targets:          list[dict] = []
+    seen_collections: set[str]   = set()
     batch_sz = 100
 
     for i in range(0, len(table), batch_sz):
         chunk = table[i : i + batch_sz]
+
+        # Build obs_id → obs_collection map for this chunk so product rows
+        # can be attributed to the right mission without an extra MAST call.
+        collection_map: dict[str, str] = {
+            str(row["obs_id"]): str(row["obs_collection"])
+            for row in chunk
+        }
+
         try:
             products = Observations.get_product_list(chunk)
         except Exception as e:
@@ -95,52 +133,67 @@ def _query_mast_observations(mission_key: str) -> list[dict]:
 
         for row in products:
             try:
-                desc = str(row["description"]).lower()
-                uri  = str(row["dataURI"])
+                sub_group = str(row.get("productSubGroupDescription") or "")
+                uri       = str(row["dataURI"])
             except (KeyError, TypeError):
                 continue
 
-            if keyword in desc and uri.endswith(".fits"):
-                # Extract sector from TESS URIs (e.g. tess2019...s0001...)
-                sector = None
-                if mission_key == "tess":
-                    parts = uri.split("/")
-                    for p in parts:
-                        if p.startswith("s") and p[1:].isdigit():
-                            sector = int(p[1:])
-                            break
+            # The structured photometry check — any value ending in "LC"
+            # (LC, LLC, SLC) is a light curve file.
+            if not sub_group.upper().endswith("LC"):
+                continue
+            if not uri.endswith(".fits"):
+                continue
 
-                # TIC ID is in the obs_id field of the parent observation row
-                # For simplicity use the filename stem as the identifier
-                filename = uri.split("/")[-1]
-                tic_id   = filename.split("-")[0].lstrip("kplrktwo").lstrip("0") or filename
+            # Map back to the parent observation's collection name.
+            # parent_obsid is the link from product → observation.
+            parent_id      = str(row.get("parent_obsid") or row.get("obs_id") or "")
+            obs_collection = collection_map.get(parent_id, "unknown")
 
-                targets.append({
-                    "tic_id":   tic_id,
-                    "mission":  mission_key,
-                    "sector":   sector,
-                    "fits_url": uri,
-                    "priority": 1 if mission_key == "tess" else 0,
-                })
+            if obs_collection not in seen_collections:
+                log.info("  Discovered collection: %s", obs_collection)
+                seen_collections.add(obs_collection)
 
+            # Active missions (TESS releases new data every ~27 days) get
+            # higher priority so fresh sectors are processed before backlog.
+            priority = 1 if obs_collection.upper() == "TESS" else 0
+
+            targets.append({
+                "tic_id":   _extract_target_id(uri, parent_id),
+                "mission":  obs_collection.lower(),
+                "sector":   _extract_sector(uri, obs_collection),
+                "fits_url": uri,
+                "priority": priority,
+            })
+
+    log.info(
+        "  Scan complete: %d light curve targets across %d collections: %s",
+        len(targets), len(seen_collections), sorted(seen_collections),
+    )
     return targets
 
 
 async def run_mast_sync() -> dict:
     """
-    Main entry point called by the scheduler.
+    Main entry point called by the scheduler every 24 hours.
 
-    Queries MAST for all three missions, filters to targets not already
-    in the queue, and sends them to POST /queue/populate in batches.
+    Queries MAST for all light curve products, sends new targets to
+    POST /queue/populate in batches, and returns a summary dict that
+    is written to the scheduler_log collection for Mission Control.
 
-    Returns a summary dict that is written to the scheduler_log collection.
+    Duplicate targets (same tic_id + mission + sector) are silently skipped
+    by the unique index on the work_queue collection — safe to re-run.
     """
-    settings  = get_settings()
-    started   = datetime.now(timezone.utc)
-    total_new = 0
-    errors    = []
+    settings   = get_settings()
+    started    = datetime.now(timezone.utc)
+    total_new  = 0
+    errors:    list[str] = []
 
     log.info("=== MAST sync started ===")
+
+    targets = _query_all_lightcurves()
+    if not targets:
+        log.warning("No targets returned from MAST — nothing to queue.")
 
     async with httpx.AsyncClient(
         base_url = settings.api_url,
@@ -148,43 +201,37 @@ async def run_mast_sync() -> dict:
         timeout  = 60.0,
     ) as client:
 
-        for mission_key in _MISSIONS:
+        batch_sz = settings.mast_sync_batch_size
+        for i in range(0, len(targets), batch_sz):
+            batch = targets[i : i + batch_sz]
             try:
-                targets = _query_mast_observations(mission_key)
-                if not targets:
-                    continue
-
-                # Send in batches to avoid huge request payloads
-                batch_sz = settings.mast_sync_batch_size
-                inserted = 0
-                for i in range(0, len(targets), batch_sz):
-                    batch = targets[i : i + batch_sz]
-                    try:
-                        resp = await client.post(
-                            "/queue/populate",
-                            json={"targets": batch},
-                        )
-                        resp.raise_for_status()
-                        result   = resp.json()
-                        inserted += result.get("inserted", 0)
-                    except Exception as e:
-                        log.error("Populate batch failed: %s", e)
-                        errors.append(str(e))
-
-                log.info("  %s: %d new targets queued", mission_key, inserted)
+                resp = await client.post("/queue/populate", json={"targets": batch})
+                resp.raise_for_status()
+                result    = resp.json()
+                inserted  = result.get("inserted", 0)
                 total_new += inserted
-
+                log.info(
+                    "  Batch %d/%d: %d inserted, %d skipped (already queued)",
+                    i // batch_sz + 1,
+                    -(-len(targets) // batch_sz),  # ceiling division
+                    inserted,
+                    result.get("skipped", 0),
+                )
             except Exception as e:
-                log.error("Mission %s sync failed: %s", mission_key, e)
-                errors.append(f"{mission_key}: {e}")
+                log.error("Populate batch %d failed: %s", i // batch_sz, e)
+                errors.append(str(e))
 
     elapsed = (datetime.now(timezone.utc) - started).total_seconds()
-    log.info("=== MAST sync complete: %d new targets in %.0fs ===", total_new, elapsed)
+    log.info(
+        "=== MAST sync complete: %d new targets queued in %.0fs ===",
+        total_new, elapsed,
+    )
 
     return {
-        "task":       "mast_sync",
-        "started_at": started,
-        "elapsed_s":  elapsed,
-        "new_targets": total_new,
-        "errors":     errors,
+        "task":        "mast_sync",
+        "started_at":  started,
+        "elapsed_s":   elapsed,
+        "discovered":  len(targets),
+        "inserted":    total_new,
+        "errors":      errors,
     }
