@@ -61,7 +61,7 @@
  * Base URL for the Lumina REST API.
  * Update this when the API is deployed.
  */
-const API_BASE = "https://api.lumina-exoplanet.com";   // placeholder
+const API_BASE = "https://lumina-exoplanet-hunter.onrender.com";
 
 /** How often to poll the API for fresh data (milliseconds). */
 const POLL_INTERVAL_MS = 30_000;
