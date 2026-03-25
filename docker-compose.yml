@@ -18,8 +18,8 @@ services:
   # ── FastAPI ───────────────────────────────────────────────────────────────────
   api:
     build:
-      context: .
-      dockerfile: api/Dockerfile
+      context: ./api
+      dockerfile: Dockerfile
     restart: unless-stopped
     environment:
       # All values come from .env — no secrets hardcoded here.
