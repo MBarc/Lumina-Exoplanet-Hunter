@@ -324,10 +324,10 @@ async function refresh() {
   try {
     // Fire all four requests in parallel
     const [stats, candidates, leaderboard, activity] = await Promise.all([
-      fetchJSON("/api/stats"),
-      fetchJSON("/api/candidates?limit=10"),
-      fetchJSON("/api/leaderboard?limit=10"),
-      fetchJSON("/api/activity?hours=24"),
+      fetchJSON("/stats"),
+      fetchJSON("/candidates?limit=10"),
+      fetchJSON("/stats/leaderboard?limit=10"),
+      fetchJSON("/stats/activity?hours=24"),
     ]);
 
     renderStats(stats);
