@@ -2,12 +2,13 @@ version: "3.9"
 
 # ── Lumina local development stack ─────────────────────────────────────────────
 #
-# Starts two containers:
-#   mongo  — MongoDB 7 database with a named volume for persistence
-#   api    — FastAPI application, auto-reloads on code changes
+# Starts three containers:
+#   mongo      — MongoDB 7 database with a named volume for persistence
+#   api        — FastAPI application, auto-reloads on code changes
+#   scheduler  — APScheduler service; syncs MAST and monitors the work queue
 #
 # Usage:
-#   docker compose up --build       # first run (builds the API image)
+#   docker compose up --build       # first run (builds all images)
 #   docker compose up               # subsequent runs
 #   docker compose down             # stop and remove containers
 #   docker compose down -v          # also wipe the MongoDB data volume
@@ -70,6 +71,28 @@ services:
         --port 8000
         --reload
         --reload-dir /app/api
+
+  # ── Scheduler ─────────────────────────────────────────────────────────────────
+  scheduler:
+    build:
+      context: .
+      dockerfile: scheduler/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api           # wait for the api container to start (not health — the
+                      # scheduler's own wait_for_api() loop handles readiness)
+    environment:
+      API_URL: http://api:8000
+      API_KEY: ${API_KEY:-dev-insecure-key}
+      # Tune these to taste in your .env file:
+      # MAST_SYNC_BATCH_SIZE: 500
+      # QUEUE_LOW_WATER_MARK: 100
+      # MAX_JOBS_PER_NODE: 5
+      # JOB_TIMEOUT_SECONDS: 3600
+    volumes:
+      # Source mount so you can edit scheduler code without rebuilding.
+      # Remove in production builds.
+      - .:/app
 
 volumes:
   mongo_data:

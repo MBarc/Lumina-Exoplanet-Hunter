@@ -7,6 +7,7 @@ POST /queue/populate    — admin/cron adds new targets to the queue
 """
 
 from __future__ import annotations
+import asyncio
 from datetime import datetime, timezone, timedelta
 
 from bson import ObjectId
@@ -14,7 +15,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 
 from api import database as db
 from api.config import get_settings
-from api.schemas import QueueItem, PopulateRequest
+from api.schemas import QueueItem, PopulateRequest, QueueStatus
 
 router = APIRouter(prefix="/queue", tags=["queue"])
 
@@ -74,6 +75,31 @@ async def get_next_jobs(
         ))
 
     return claimed
+
+
+@router.get("/status", response_model=QueueStatus)
+async def get_queue_status():
+    """
+    Return a depth breakdown of the work queue.
+
+    Polled every 5 minutes by the scheduler's queue-health task to detect
+    low queue depth and trigger a MAST sync if needed. Also shown on the
+    Mission Control dashboard.
+    """
+    col = db.work_queue()
+
+    queued, assigned = await asyncio.gather(
+        col.count_documents({"status": "queued"}),
+        col.count_documents({"status": "assigned"}),
+    )
+    done = await db.processed_log().count_documents({})
+
+    return QueueStatus(
+        queued   = queued,
+        assigned = assigned,
+        done     = done,
+        total    = queued + assigned + done,
+    )
 
 
 @router.post("/release")

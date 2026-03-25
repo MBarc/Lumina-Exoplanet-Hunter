@@ -215,7 +215,25 @@ layout = html.Div(className="app-container", children=[
             ),
         ]),
 
-        # Panel: My Findings table (bottom, full width)
+        # Panel: My Queue (bottom-left)
+        html.Div(className="panel panel-queue", children=[
+            html.Div(className="panel-scanline"),
+            html.Div("MY QUEUE", className="panel-title"),
+            html.Div(id="my-queue-content", className="queue-stat-row", children=[
+                html.Div("CONNECTING...", className="empty-state"),
+            ]),
+        ]),
+
+        # Panel: My History (bottom-center) — recent stars processed by this node
+        html.Div(className="panel panel-history", children=[
+            html.Div(className="panel-scanline"),
+            html.Div("MY HISTORY", className="panel-title"),
+            html.Div(id="my-history-content", className="history-list", children=[
+                html.Div("NO HISTORY YET", className="empty-state"),
+            ]),
+        ]),
+
+        # Panel: My Findings table (bottom-right)
         html.Div(className="panel panel-cands", children=[
             html.Div(className="panel-scanline"),
             html.Div("MY FINDINGS", className="panel-title"),

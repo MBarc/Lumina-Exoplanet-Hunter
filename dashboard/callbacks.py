@@ -234,6 +234,73 @@ def update_best_find(n):
 
 
 @app.callback(
+    Output("my-queue-content", "children"),
+    Input("interval-10s", "n_intervals"),
+)
+def update_my_queue(n):
+    """Show global queue depth as labelled bars in the MY QUEUE panel."""
+    qs = db.get_my_queue_status()
+    queued   = qs.get("queued",   0)
+    assigned = qs.get("assigned", 0)
+    done     = qs.get("done",     0)
+    total    = max(queued + assigned + done, 1)  # avoid div-by-zero
+
+    def _bar_item(label, count, color, denominator=total):
+        pct = min(int(count / denominator * 100), 100)
+        return html.Div(className="queue-stat-item", children=[
+            html.Div(className="queue-stat-header", children=[
+                html.Span(label,       className="queue-stat-label"),
+                html.Span(f"{count:,}", className="queue-stat-value"),
+            ]),
+            html.Div(className="queue-bar-bg", children=[
+                html.Div(className="queue-bar-fg",
+                         style={"width": f"{pct}%", "background": color}),
+            ]),
+        ])
+
+    return html.Div(className="queue-stat-row", children=[
+        _bar_item("QUEUED",   queued,   "#00c8ff"),
+        _bar_item("ASSIGNED", assigned, "#ffd166"),
+        _bar_item("DONE",     done,     "#06d6a0"),
+    ])
+
+
+@app.callback(
+    Output("my-history-content", "children"),
+    Input("interval-10s", "n_intervals"),
+)
+def update_my_history(n):
+    """Populate the MY HISTORY panel with recent processed stars from this node."""
+    rows = db.get_my_history(_HOSTNAME, 10)
+    if not rows:
+        return html.Div("NO HISTORY YET", className="empty-state")
+
+    items = []
+    for row in rows:
+        tic    = row.get("tic_id", "?")
+        mission = (row.get("mission") or "").upper()
+        sector = row.get("sector")
+        cands  = row.get("candidates_found", 0)
+        ts     = row.get("processed_at")
+
+        label = f"TIC {tic}"
+        if sector is not None:
+            label += f" · S{sector}"
+        elif mission:
+            label += f" · {mission}"
+
+        time_str = ts.strftime("%H:%M") if ts and hasattr(ts, "strftime") else "—"
+        cand_str = f"✓ {cands}" if cands else ""
+
+        items.append(html.Div(className="history-item", children=[
+            html.Span(label,    className="history-item-tic"),
+            html.Span(f"{time_str}  {cand_str}".strip(), className="history-item-time"),
+        ]))
+
+    return html.Div(className="history-list", children=items)
+
+
+@app.callback(
     Output("candidates-table", "data"),
     Input("interval-5s", "n_intervals"),
 )

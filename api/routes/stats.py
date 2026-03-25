@@ -8,11 +8,13 @@ GET /stats/my           — personal stats for one worker node
 """
 
 from __future__ import annotations
+import asyncio
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Query
 
 from api import database as db
+from api.config import get_settings
 from api.schemas import NetworkStats, LeaderboardEntry, ActivityPoint
 
 router = APIRouter(prefix="/stats", tags=["stats"])
@@ -35,8 +37,9 @@ async def get_network_stats():
         "hostname", {"reported_at": {"$gte": cutoff}}
     )
 
-    queue_remaining = await db.work_queue().count_documents(
-        {"status": {"$in": ["queued", "assigned"]}}
+    queue_depth, queue_remaining = await asyncio.gather(
+        db.work_queue().count_documents({"status": "queued"}),
+        db.work_queue().count_documents({"status": {"$in": ["queued", "assigned"]}}),
     )
 
     total_seconds = float(global_doc.get("total_compute_seconds", 0))
@@ -46,7 +49,9 @@ async def get_network_stats():
         stars_analyzed   = int(global_doc.get("total_stars_analyzed", 0)),
         candidates_found = int(global_doc.get("total_candidates", 0)),
         compute_hours    = round(total_seconds / 3600, 1),
+        queue_depth      = queue_depth,
         queue_remaining  = queue_remaining,
+        model_version    = get_settings().model_version,
     )
 
 

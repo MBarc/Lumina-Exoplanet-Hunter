@@ -97,7 +97,9 @@ class NetworkStats(BaseModel):
     stars_analyzed:   int
     candidates_found: int
     compute_hours:    float
-    queue_remaining:  int
+    queue_depth:      int     # jobs currently queued (waiting to be claimed)
+    queue_remaining:  int     # total unfinished jobs (queued + assigned)
+    model_version:    str     # e.g. "ExoNet v2.0"
 
 class LeaderboardEntry(BaseModel):
     rank:             int
@@ -108,6 +110,50 @@ class LeaderboardEntry(BaseModel):
 class ActivityPoint(BaseModel):
     hour:   str     # ISO 8601 hour string
     count:  int
+
+
+# ── Node info ──────────────────────────────────────────────────────────────────
+
+class NodeInfo(BaseModel):
+    """Live telemetry snapshot for one worker node."""
+    hostname:         str
+    uptime_seconds:   int   = 0
+    stars_analyzed:   int   = 0
+    candidates_found: int   = 0
+    cpu_percent:      float = 0.0
+    ram_percent:      float = 0.0
+    current_tic_id:   str | None = None
+    current_sector:   int | None = None
+    last_seen:        datetime
+
+
+# ── Queue status ───────────────────────────────────────────────────────────────
+
+class QueueStatus(BaseModel):
+    """Work queue depth breakdown returned by GET /queue/status."""
+    queued:   int   # jobs waiting to be claimed
+    assigned: int   # jobs currently held by a worker
+    done:     int   # jobs completed (processed_log count)
+    total:    int   # queued + assigned + done
+
+
+# ── Scheduler log ──────────────────────────────────────────────────────────────
+
+class SchedulerLogEntry(BaseModel):
+    """One task-run result posted by the scheduler container."""
+    task:        str                   # e.g. "mast_sync", "queue_health"
+    started_at:  datetime | None = None
+    elapsed_s:   float | None   = None
+    errors:      list[str]      = []
+    # mast_sync fields
+    discovered:  int | None = None
+    inserted:    int | None = None
+    skipped:     int | None = None
+    # queue_health fields
+    queued:      int | None = None
+    assigned:    int | None = None
+    done:        int | None = None
+    active_nodes: int | None = None
 
 
 # ── Star detail ───────────────────────────────────────────────────────────────

@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # Base URL for the MAST portal — used when building star detail links.
     mast_portal_url: str = "https://mast.stsci.edu/portal/Mashup/Clients/Mast/Portal.html"
 
+    # ── Model metadata ────────────────────────────────────────────────────────
+    # Human-readable model version string surfaced via GET /stats so the
+    # public dashboard can display the current model without a code deploy.
+    model_version: str = "ExoNet v2.0"
+
     class Config:
         # Load from a .env file when running locally outside Docker.
         env_file = ".env"

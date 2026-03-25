@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api import database
 from api.config import get_settings
-from api.routes import queue, candidates, telemetry, stats, stars
+from api.routes import queue, candidates, telemetry, stats, stars, admin, nodes
 
 
 # ── Lifespan: connect to MongoDB on startup, disconnect on shutdown ────────────
@@ -55,7 +55,8 @@ app.add_middleware(
 # Worker-facing write endpoints (queue, candidates, telemetry) require an
 # X-API-Key header. Public read endpoints (stats, stars) are open.
 
-_PUBLIC_PREFIXES = ("/health", "/docs", "/openapi", "/stats", "/stars")
+_PUBLIC_PREFIXES = ("/health", "/docs", "/openapi", "/stats", "/stars", "/nodes",
+                    "/queue/status", "/admin/scheduler/log")
 
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
@@ -87,6 +88,8 @@ app.include_router(candidates.router)
 app.include_router(telemetry.router)
 app.include_router(stats.router)
 app.include_router(stars.router)
+app.include_router(admin.router)
+app.include_router(nodes.router)
 
 
 # ── Health check ───────────────────────────────────────────────────────────────

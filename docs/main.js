@@ -128,7 +128,8 @@ function buildTicker(stats) {
     ["STARS",      stats ? formatNumber(stats.stars_analyzed) + " ANALYZED" : "—"],
     ["CANDIDATES", stats ? formatNumber(stats.candidates_found) + " FOUND"  : "—"],
     ["COMPUTE",    stats ? formatHours(stats.compute_hours) + " CONTRIBUTED": "—"],
-    ["MODEL",      "EXONET v2.0  ·  AUC 0.81"],
+    ["MODEL",      stats && stats.model_version ? stats.model_version.toUpperCase() : "EXONET v2.0"],
+    ["QUEUE",      stats ? formatNumber(stats.queue_remaining) + " TARGETS REMAINING" : "—"],
     ["ALGORITHM",  "BLS + RESIDUAL CNN"],
     ["MISSIONS",   "KEPLER  ·  K2  ·  TESS"],
     ["TARGET",     "EXOPLANET TRANSIT DETECTION"],
@@ -197,10 +198,17 @@ function renderStats(data) {
   animateStat(document.getElementById("stat-nodes"),      data.active_nodes);
   animateStat(document.getElementById("stat-stars"),      data.stars_analyzed);
   animateStat(document.getElementById("stat-candidates"), data.candidates_found);
+  animateStat(document.getElementById("stat-queue"),      data.queue_remaining ?? data.queue_depth ?? 0);
 
   // Compute hours shown as-is with formatting
   const computeEl = document.getElementById("stat-compute");
   computeEl.textContent = formatHours(data.compute_hours);
+
+  // Model version badge
+  if (data.model_version) {
+    const badge = document.getElementById("model-badge");
+    if (badge) badge.textContent = data.model_version.toUpperCase();
+  }
 }
 
 function renderCandidates(list) {

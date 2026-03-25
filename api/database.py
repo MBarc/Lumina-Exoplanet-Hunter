@@ -50,6 +50,7 @@ def candidates():       return db()["candidates"]
 def processed_log():    return db()["processed_log"]
 def node_telemetry():   return db()["node_telemetry"]
 def network_stats():    return db()["network_stats"]
+def scheduler_log():    return db()["scheduler_log"]
 
 
 # ── Index definitions ──────────────────────────────────────────────────────────
@@ -88,4 +89,10 @@ async def _ensure_indexes() -> None:
     # node_telemetry: latest heartbeat per node
     await node_telemetry().create_indexes([
         IndexModel([("hostname", ASCENDING), ("reported_at", DESCENDING)]),
+    ])
+
+    # scheduler_log: recent task runs, queried newest-first
+    await scheduler_log().create_indexes([
+        IndexModel([("logged_at", DESCENDING)]),
+        IndexModel([("task", ASCENDING), ("logged_at", DESCENDING)]),
     ])

@@ -117,6 +117,50 @@ def get_my_stats(hostname: str) -> dict:
     return result
 
 
+def get_my_queue_status() -> dict:
+    """
+    Return overall queue depth breakdown from the work_queue collection.
+
+    Shown in the MY QUEUE panel as bar charts so the contributor can see
+    how much work is left in the global pipeline.
+    """
+    result = {"queued": 0, "assigned": 0, "done": 0}
+    try:
+        if _client is None:
+            return result
+        col = _client["lumina"]["work_queue"]
+        result["queued"]   = col.count_documents({"status": "queued"})
+        result["assigned"] = col.count_documents({"status": "assigned"})
+        result["done"]     = _client["lumina"]["processed_log"].count_documents({})
+    except Exception as e:
+        logging.warning(f"get_my_queue_status: {e}")
+    return result
+
+
+def get_my_history(hostname: str, n: int = 10) -> list[dict]:
+    """
+    Most recent stars processed by this machine from the processed_log.
+
+    Returns lightweight records (tic_id, mission, sector, processed_at,
+    candidates_found) suitable for the MY HISTORY list panel.
+    """
+    try:
+        if _client is None:
+            return []
+        col = _client["lumina"]["processed_log"]
+        cursor = col.find(
+            {"worker_hostname": hostname},
+            projection={
+                "tic_id": 1, "mission": 1, "sector": 1,
+                "processed_at": 1, "candidates_found": 1,
+            },
+        ).sort("processed_at", DESCENDING).limit(n)
+        return list(cursor)
+    except Exception as e:
+        logging.warning(f"get_my_history: {e}")
+        return []
+
+
 def get_my_telemetry(hostname: str) -> dict | None:
     """Latest heartbeat document for this machine."""
     try:

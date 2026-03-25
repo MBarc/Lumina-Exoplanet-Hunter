@@ -1,0 +1,5 @@
+apscheduler==3.10.4
+httpx==0.27.2
+pydantic-settings==2.4.0
+astroquery==0.4.7
+astropy==6.1.3

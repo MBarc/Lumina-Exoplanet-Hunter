@@ -112,7 +112,7 @@ body::before {
   grid-template-areas:
     "live network nodes"
     "live detail  nodes"
-    "cands cands  cands";
+    "queue history cands";
   gap: 10px; padding: 10px;
   flex: 1; min-height: 0; overflow: hidden;
 }
@@ -182,11 +182,54 @@ body::before {
   pointer-events: none; z-index: 0; border-radius: 3px;
 }
 
-.panel-live   { grid-area: live; }
-.panel-network{ grid-area: network; }
-.panel-detail { grid-area: detail; }
-.panel-nodes  { grid-area: nodes; overflow-y: auto; }
-.panel-cands  { grid-area: cands; }
+.panel-live    { grid-area: live; }
+.panel-network { grid-area: network; }
+.panel-detail  { grid-area: detail; }
+.panel-nodes   { grid-area: nodes; overflow-y: auto; }
+.panel-cands   { grid-area: cands; }
+.panel-queue   { grid-area: queue; }
+.panel-history { grid-area: history; overflow-y: auto; }
+
+/* === QUEUE DEPTH BARS === */
+.queue-stat-row {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 8px; flex: 1;
+}
+.queue-stat-item {
+  display: flex; flex-direction: column; gap: 3px;
+}
+.queue-stat-header {
+  display: flex; justify-content: space-between; align-items: baseline;
+}
+.queue-stat-label {
+  font-family: 'Consolas', monospace; font-size: 9px;
+  letter-spacing: 0.15em; color: #2a4060; text-transform: uppercase;
+}
+.queue-stat-value {
+  font-family: 'Consolas', monospace; font-size: 13px; color: #e8f4ff;
+}
+.queue-bar-bg {
+  height: 3px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden;
+}
+.queue-bar-fg {
+  height: 100%; border-radius: 2px; transition: width 0.8s ease;
+}
+
+/* === HISTORY LIST === */
+.history-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; flex: 1; overflow-y: auto; }
+.history-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 6px;
+  background: rgba(0,200,255,0.03);
+  border-left: 2px solid rgba(0,200,255,0.15);
+  border-radius: 2px;
+}
+.history-item-tic {
+  font-family: 'Consolas', monospace; font-size: 10px; color: #a0c4e8;
+}
+.history-item-time {
+  font-family: 'Consolas', monospace; font-size: 9px; color: #2a4060;
+}
 
 /* === PANEL TITLES === */
 .panel-title {
