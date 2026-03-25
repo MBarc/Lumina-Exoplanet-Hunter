@@ -13,7 +13,7 @@ _CSS_JS = _CSS.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
 
 app = dash.Dash(
     __name__,
-    title="Lumina Mission Control",
+    title="Lumina — My Dashboard",
     update_title=None,
     suppress_callback_exceptions=True,
 )
