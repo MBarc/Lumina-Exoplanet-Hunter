@@ -351,6 +351,53 @@ body::before {
   50%       { opacity: 0.9; }
 }
 
+/* === HEADER MACHINE NAME === */
+.header-machine {
+  font-family: 'Consolas', monospace; font-size: 10px;
+  color: #4a6380; letter-spacing: 0.2em; text-transform: uppercase;
+  margin-left: 4px;
+}
+
+/* === STATUS BADGE VARIANTS === */
+.badge-online  { border-color: #06d6a0; color: #06d6a0; background: rgba(6,214,160,0.08);  text-shadow: 0 0 6px rgba(6,214,160,0.4); }
+.badge-idle    { border-color: #ffd166; color: #ffd166; background: rgba(255,209,102,0.08); text-shadow: 0 0 6px rgba(255,209,102,0.4); }
+.badge-offline { border-color: #ff4d6d; color: #ff4d6d; background: rgba(255,77,109,0.08);  text-shadow: 0 0 6px rgba(255,77,109,0.4); }
+
+/* === MY MACHINE PANEL === */
+.machine-detail {
+  display: flex; flex-direction: column; gap: 8px;
+  padding-top: 4px;
+}
+.machine-status-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+}
+.machine-status-text {
+  font-family: 'Consolas', monospace; font-size: 9px;
+  color: #4a6380; letter-spacing: 0.15em;
+  margin-left: auto;
+}
+.machine-divider {
+  height: 1px; background: rgba(0,200,255,0.08); margin: 2px 0;
+}
+.machine-metric { display: flex; flex-direction: column; gap: 4px; }
+.machine-metric-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+}
+.machine-metric-label {
+  font-family: 'Consolas', monospace; font-size: 9px;
+  color: #4a6380; letter-spacing: 0.15em; text-transform: uppercase;
+}
+.machine-metric-value {
+  font-family: 'Consolas', monospace; font-size: 11px; color: #e8f4ff;
+}
+.machine-bar-bg {
+  background: rgba(255,255,255,0.06); height: 3px;
+  border-radius: 2px; width: 100%;
+}
+.machine-bar-fg {
+  height: 3px; border-radius: 2px; transition: width 0.6s ease;
+}
+
 /* === SCROLLBAR === */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
