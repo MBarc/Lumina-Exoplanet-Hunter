@@ -241,6 +241,45 @@ _n_downloaded = 0
 _n_skipped    = 0
 _n_failed     = 0
 
+# Pre-loaded set of filenames already on disk — populated once in run_download
+# so threads use a fast in-memory lookup instead of one SMB stat() per file.
+_existing_files: set[str] = set()
+
+
+# ── Target ID extraction ───────────────────────────────────────────────────────
+
+import re as _re
+
+_TARGET_PATTERNS = [
+    _re.compile(r"^kplr(\d+)"),                          # Kepler: kplr007667638-*
+    _re.compile(r"^tess\d+-s\d+-(\d+)-"),                # TESS:   tess*-s*-0000000139595602-*
+    _re.compile(r"_lightcurve_(\d+)-"),                   # K2:     hlsp_kegs_k2_lightcurve_201078353-*
+]
+
+
+def _extract_target_id(filename: str) -> str | None:
+    """Extract a mission-agnostic target ID string from a FITS filename."""
+    for pat in _TARGET_PATTERNS:
+        m = pat.search(filename)
+        if m:
+            return m.group(1).lstrip("0") or "0"
+    return None
+
+
+def _count_existing_targets(output_dir: Path) -> set[str]:
+    """
+    Scan output_dir for existing FITS files and return the set of unique
+    target IDs already on disk.
+    """
+    targets: set[str] = set()
+    for fname in os.listdir(output_dir):
+        if not fname.endswith(".fits"):
+            continue
+        tid = _extract_target_id(fname)
+        if tid:
+            targets.add(tid)
+    return targets
+
 
 def _download_one(uri: str, filename: str, output_dir: Path) -> str:
     """
@@ -257,9 +296,13 @@ def _download_one(uri: str, filename: str, output_dir: Path) -> str:
     dest = output_dir / filename
 
     # --- Resumability: skip if the file already exists and is non-empty. ------
-    # We do a quick size check rather than a checksum because MAST does not
-    # publish checksums in a conveniently queryable way. A zero-byte file
-    # indicates a failed previous download and should be retried.
+    # Use the pre-loaded in-memory set when available (avoids one SMB network
+    # round-trip per file, which is critical when output_dir is a NAS share
+    # with hundreds of thousands of existing files).
+    if filename in _existing_files:
+        with _counter_lock:
+            _n_skipped += 1
+        return "skipped"
     if dest.exists() and dest.stat().st_size > 0:
         with _counter_lock:
             _n_skipped += 1
@@ -309,6 +352,7 @@ def run_download(
     output_dir: Path,
     threads: int,
     limit: int | None,
+    target_limit: int | None = None,
 ) -> None:
     """
     Download light curves for one or more missions using a thread pool.
@@ -325,15 +369,50 @@ def run_download(
     threads    : Number of concurrent download threads.
     limit      : Max observations to fetch per mission (None = no cap).
     """
+    global _existing_files
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pre-load existing filenames into memory for fast skip checks.
+    # os.listdir() makes a single directory-listing call rather than one
+    # stat() per file, which is dramatically faster on large NAS directories.
+    log.info("Scanning output directory for existing files...")
+    _existing_files = {f for f in os.listdir(output_dir) if f.endswith(".fits")}
+    log.info("  Found %s existing files (will skip these)", f"{len(_existing_files):,}")
+
+    # ── Target-level deduplication ────────────────────────────────────────────
+    # Build a set of target IDs already on disk so we never download a second
+    # file for a target we already have, and stop once target_limit is reached.
+    if target_limit is not None:
+        log.info("Counting unique targets already on disk...")
+        existing_targets: set[str] = _count_existing_targets(output_dir)
+        log.info("  Found %s unique targets (goal: %s)",
+                 f"{len(existing_targets):,}", f"{target_limit:,}")
+        if len(existing_targets) >= target_limit:
+            log.info("Target goal already met — nothing to download.")
+            return
+    else:
+        existing_targets = set()
 
     # ── Step 1: Collect all download targets ──────────────────────────────────
     all_targets: list[tuple[str, str]] = []   # list of (uri, filename)
+    seen_targets: set[str] = set(existing_targets)  # don't re-add known targets
 
     for mission in missions:
         obs_table = _query_obs_table(mission, limit)
         for uri, filename in _iter_download_urls(obs_table, mission):
+            tid = _extract_target_id(filename)
+            # Skip if this target is already on disk
+            if tid and tid in seen_targets:
+                continue
             all_targets.append((uri, filename))
+            if tid:
+                seen_targets.add(tid)
+            # Stop collecting once we have enough new targets to hit the goal
+            if target_limit is not None:
+                new_targets = len(seen_targets) - len(existing_targets)
+                if new_targets >= (target_limit - len(existing_targets)):
+                    log.info("Collected enough new targets to reach goal — stopping query.")
+                    break
 
     if not all_targets:
         log.error("No downloadable files found. Check mission names and MAST connectivity.")
@@ -466,9 +545,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="N",
         help=(
-            "Maximum number of observations to fetch *per mission*. "
+            "Maximum number of observations to fetch *per mission* from MAST. "
             "Useful for smoke-testing the script before a full run. "
             "Targets are randomly shuffled before the cap is applied."
+        ),
+    )
+    parser.add_argument(
+        "--target-limit",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Stop after reaching N unique targets on disk (per mission). "
+            "Targets already downloaded are counted and skipped; only new "
+            "targets are downloaded until the goal is met. Safe to re-run: "
+            "if the goal is already met, nothing is downloaded."
         ),
     )
     parser.add_argument(
@@ -510,12 +601,14 @@ def main(argv: list[str] | None = None) -> None:
     log.info("Output dir  : %s", args.output_dir)
     log.info("Threads     : %d", args.threads)
     log.info("Limit/mission: %s", args.limit if args.limit else "none")
+    log.info("Target limit : %s", args.target_limit if args.target_limit else "none")
 
     run_download(
         missions=missions,
         output_dir=args.output_dir,
         threads=args.threads,
         limit=args.limit,
+        target_limit=args.target_limit,
     )
 
 

@@ -45,3 +45,17 @@ Thumbs.db
 # Logs and runtime data
 *.log
 *.txt.bak
+
+# Homelab one-off scripts (hardcoded NAS credentials / LAN addresses) - never commit
+logs/
+scripts/probe_nas*.py
+scripts/check_sort_progress.py
+scripts/deploy_sort_script.py
+scripts/monitor_downloads.ps1
+scripts/move_fits_*
+scripts/organize_*.py
+scripts/nas_fetch_kepids.py
+scripts/bls_variant_harness.py
+scripts/validate_bls_fix.py
+scripts/run_kepler_fresh.ps1
+scripts/watchdog_kepler.ps1
