@@ -3,106 +3,74 @@
 
 # Lumina
 
-**Volunteer computers searching NASA's public telescope data for new worlds.**
+Volunteer computers searching NASA's public telescope data for new worlds.
 
 [Mission Control (live network)](https://mbarc.github.io/Lumina-Exoplanet-Hunter/) · [How it works](#how-it-works) · [Project status](#project-status)
 
 </div>
 
----
+## What this is
 
-## What Is This?
+Lumina is an open-source volunteer project, still in development, that searches public telescope data for possible planets around other stars. It isn't affiliated with NASA. Once the client is released, it will run in the background on your computer while you work. All the computers running it together make up a network called ExoNet.
 
-Lumina is an independent, open-source volunteer project in development, not affiliated with NASA. It uses spare computing time to search public records of how stars brighten and dim, looking for possible planets for astronomers to investigate. It runs in the background while you go about your day.
+## How you find a planet you can't see
 
-Participating computers form **ExoNet**: a volunteer-powered network working toward a single goal — finding worlds beyond our solar system.
+When a planet passes in front of its star, it blocks a small fraction of the star's light, often less than one percent. A telescope watching that star sees its brightness dip briefly, and the dip comes back every time the planet goes around. The Lumina logo shows exactly that: a star, a planet, and the dip in the line underneath.
 
----
+Kepler watched hundreds of thousands of stars this way. NASA publishes those brightness records, along with the ones from K2 and TESS, so anyone can go back through them with new methods. Lumina goes through them star by star, looking for dips that repeat the way a planet's would, and passes anything promising to people for a closer look.
 
-## How Do You Find a Planet You Can't See?
+## How it works
 
-When a planet passes in front of its star, it blocks a tiny fraction of the star's light — often less than one percent. A telescope watching that star records a brief, regular dip in brightness, repeating every time the planet completes an orbit. That is the picture in the Lumina logo: a star, a planet, and the dip it leaves in the line below.
+This is how it will work once the installer is out:
 
-Missions like Kepler watched hundreds of thousands of stars this way. Lumina's job is to look through those brightness records, star by star, for dips that repeat like a planet's would.
+1. You install the Lumina client on a Windows PC.
+2. It runs in the background. You don't have to do anything.
+3. ExoNet hands it a batch of stars from the queue.
+4. It downloads those stars' brightness records (Kepler for now, with TESS and K2 planned) and looks for repeating dips.
+5. It sends anything that looks like a planet back to the network for review.
 
----
+The more computers join, the faster the search goes.
 
-## The Problem
+## Project status
 
-Space telescopes like Kepler, K2, and TESS have produced an enormous public archive of these brightness records. NASA makes them available so anyone can revisit the observations with new tools. Lumina aims to contribute by sharing the search across volunteer computers and flagging possible planet signals for further assessment.
-
----
-
-## How It Works
-
-This is the planned volunteer workflow once the installer is released:
-
-1. **Install** the Lumina client on a Windows PC
-2. It runs quietly in the **background** — no interaction required
-3. It joins the ExoNet network and is handed a batch of stars awaiting analysis by ExoNet
-4. It downloads those stars' brightness records (Kepler today; TESS and K2 planned) and looks for repeating dips
-5. Possible planet signals are sent back to the network for review
-
-The more computers taking part, the faster the search goes.
-
----
-
-## Project Status
-
-Lumina is in active development by an independent volunteer.
+One independent volunteer is building Lumina, and it's still in active development.
 
 | Mission | Status |
 |---|---|
-| **Kepler** | Being searched now — the detection model is trained and tested on Kepler data |
-| **K2** | Planned |
-| **TESS** (Transiting Exoplanet Survey Satellite) | Planned — next priority |
+| Kepler | Being searched now. The detection model is trained and tested on Kepler data. |
+| K2 | Planned |
+| TESS (Transiting Exoplanet Survey Satellite) | Planned, and next in line |
 
-The Windows installer is not public yet. Signals Lumina flags are *candidates*: possible planets that need expert review and confirmation (by follow-up observation or statistical validation) before being accepted as planets.
+What Lumina flags are candidates, not planets. A candidate has to be reviewed by experts and confirmed, by follow-up observation or statistical validation, before it counts as a planet.
 
----
+## Getting started
 
-## Getting Started
+The Windows installer isn't public yet. Watch or star this repository to hear when it is.
 
-> *The installer is not public yet. Watch or star this repository to hear when it is.*
+The plan is for setup to be one step: download the installer and run it. It configures your machine, sets up the background service and connects to ExoNet on its own. You won't need any background in astronomy or programming.
 
-Once it's released, setup is meant to be: download the installer and run it. It configures your machine, sets up the background service, and connects you to the ExoNet network automatically. No astronomy or programming background required.
+## Local dashboard
 
----
+Each computer running Lumina also serves a small web page you can open in your browser. It runs entirely on your machine, so you don't need an account or an internet connection to see it. It shows:
 
-## Local Dashboard
+- which mission and sector your machine is working on
+- how many stars it has analyzed and how many are left
+- a live feed of light curves (brightness over time) as they're processed, with possible transits highlighted
+- any candidates your machine has flagged
+- how much your machine has added to ExoNet over time
 
-Every ExoNet node includes a locally hosted web dashboard accessible from your browser. No account or internet connection required to view it — it runs entirely on your machine.
+It's meant to sit in a browser tab you can glance at while you work.
 
-The dashboard lets you see:
+## If your machine finds a candidate
 
-- Which mission and sector your machine is currently processing
-- How many stars have been analyzed and how many remain
-- A live feed of light curves as they are processed, with transit detections highlighted
-- Any candidate signals your machine has flagged for review
-- Your node's contribution to the broader ExoNet network over time
+The dashboard will tell you, and you'll get to give the candidate a nickname. The nickname stays attached to it for good, but only inside ExoNet. Official exoplanet names come from separate naming campaigns run by the International Astronomical Union (NameExoWorlds), and a find here doesn't make anyone eligible for one.
 
-It is designed to be left open in a browser tab — something you can glance at while working.
+## For researchers and developers
 
----
+All of the code is open source. If you'd like to work on the detection pipeline, add another mission, or use the candidate data in your own research, open an issue or a pull request.
 
-## If Your Machine Finds a Candidate
+## Why it's worth doing
 
-When your computer flags a possible transit signal, you will be notified through the dashboard. You will also have the opportunity to assign a **nickname** to the candidate — a name that will be associated with it permanently within ExoNet.
+This data has already been collected and paid for, and it's public. Each signal ExoNet flags is a star someone may want to look at more closely. Lumina's job is to get more computers working through the archive.
 
-Nicknames are used within ExoNet only. Official names for exoplanets are chosen through separate **International Astronomical Union (IAU)** naming campaigns (NameExoWorlds); a discovery here does not guarantee eligibility or naming rights.
-
----
-
-## For Researchers & Developers
-
-Lumina is fully open source. If you are interested in contributing to the detection pipeline, extending mission support, or integrating candidate data into your own research workflows, see the project source and open an issue or pull request.
-
----
-
-## Why This Matters
-
-The data is already out there, paid for and made public. Every signal ExoNet flags is a star someone may want to take a closer look at. This project exists to put more eyes — and more computers — on that archive.
-
----
-
-*Lumina is an independent open-source initiative and is not affiliated with NASA or any space agency.*
+*Lumina is an independent open-source project and is not affiliated with NASA or any other space agency.*
