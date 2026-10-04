@@ -12,7 +12,6 @@
     --gold: #ffd166;
     --green: #06d6a0;
     --light: #e8f4ff;
-    --muted: #8aa4c2;
   }
   * { margin: 0; box-sizing: border-box; }
   html, body { width: 1280px; height: 640px; overflow: hidden; }
@@ -21,35 +20,27 @@
     color: var(--light);
     font-family: 'Trebuchet MS', 'Gill Sans', Arial, sans-serif;
     display: flex; align-items: center;
-    padding: 0 88px 0 72px; gap: 64px;
+    padding: 64px 72px; gap: 64px;
   }
   .logo { width: 400px; height: 400px; flex: none; }
   .copy { flex: 1; }
   .eyebrow {
-    color: var(--cyan); font-size: 22px; letter-spacing: 0.32em;
-    text-transform: uppercase; margin-bottom: 22px;
+    color: var(--cyan); font-size: 36px; letter-spacing: 0.08em;
+    text-transform: uppercase; margin-bottom: 18px;
   }
-  h1 { font-size: 62px; line-height: 1.08; font-weight: 700; margin-bottom: 26px; }
+  h1 { font-size: 64px; line-height: 1.08; font-weight: 700; margin-bottom: 24px; }
   h1 em { font-style: normal; color: var(--green); }
-  p { font-size: 27px; line-height: 1.4; color: var(--light); opacity: 0.88; max-width: 640px; }
-  .foot {
-    position: absolute; left: 0; right: 0; bottom: 30px;
-    display: flex; justify-content: space-between; padding: 0 72px;
-    font-size: 18px; color: var(--muted); letter-spacing: 0.04em;
-  }
-  .foot b { color: var(--cyan); font-weight: 400; }
+  p { font-size: 32px; line-height: 1.35; color: var(--light); opacity: 0.9; max-width: 660px; }
+  .disclaimer { margin-top: 28px; font-size: 28px; color: var(--light); opacity: 0.7; }
 </style>
 </head>
 <body>
   <img class="logo" src="logo.svg" alt="">
   <div class="copy">
-    <div class="eyebrow">Lumina &middot; Exoplanet Hunter</div>
-    <h1>Help find <em>new worlds</em> with your idle computer.</h1>
-    <p>Volunteer PCs search NASA's public telescope data for the tiny dips in starlight that reveal a planet.</p>
-  </div>
-  <div class="foot">
-    <span><b>github.com/MBarc/Lumina-Exoplanet-Hunter</b></span>
-    <span>Independent open-source project &middot; not affiliated with NASA</span>
+    <div class="eyebrow">Lumina</div>
+    <h1>Searching Kepler data for <em>new worlds</em></h1>
+    <p>Volunteer computers scan NASA's public Kepler observations for tiny dips in starlight that could signal a planet.</p>
+    <div class="disclaimer">Independent project &middot; Not affiliated with NASA</div>
   </div>
 </body>
 </html>
