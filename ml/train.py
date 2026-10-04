@@ -2996,8 +2996,15 @@ def train(args: argparse.Namespace) -> None:
     _log(f"\n  Starting {n_splits}-fold cross-validation  "
          f"({len(indices_cv)} train/val samples, device={device})")
 
+    # One split manifest (absolute dataset indices) for every downstream
+    # consumer — eval scripts and calibration must not rebuild their own splits.
+    folds = list(skf.split(indices_cv, strat_cv, groups_cv))
+    np.savez(output_dir / "split_manifest.npz",
+             test_idx=test_idx, train_val_idx=train_val_idx,
+             **{f"fold{f}_val_idx": indices_cv[va] for f, (_, va) in enumerate(folds, start=1)})
+
     cv_t_start = time.time()
-    for fold, (train_idx, val_idx) in enumerate(skf.split(indices_cv, strat_cv, groups_cv), start=1):
+    for fold, (train_idx, val_idx) in enumerate(folds, start=1):
         # Fully completed folds (incl. SWA) leave a fold_complete_{N}.json
         # marker with their results — skip retraining and reuse the stored
         # OOF scores.  Delete the marker to force a retrain.
@@ -3058,6 +3065,14 @@ def train(args: argparse.Namespace) -> None:
             overall_best_auc = fold_auc
             best_val_scores_all = val_scores
             best_val_labels_all = val_labels_ep
+
+        # Gate: stop cleanly after fold N so it can be evaluated before more
+        # compute is spent. Rerun without the flag to continue from fold N+1.
+        stop_after = getattr(args, "stop_after_fold", None)
+        if stop_after is not None and fold >= stop_after and fold < n_splits:
+            _log(f"\n  --stop-after-fold {stop_after}: fold {fold} done (val AUC {fold_auc:.4f}). "
+                 f"Exiting; rerun without the flag to continue.")
+            sys.exit(0)
 
     mean_auc = float(np.mean(fold_aucs))
     std_auc  = float(np.std(fold_aucs))
@@ -3292,6 +3307,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Dropout rate for CNN branch heads (0–1).")
     parser.add_argument("--weight-decay",  type=float, default=1e-4,
                         help="AdamW weight decay.")
+    parser.add_argument("--stop-after-fold", type=int, default=None,
+                        help="Exit cleanly after this fold completes (evaluation gate).")
     parser.add_argument("--save-all-folds", action="store_true",
                         help="Save a per-fold checkpoint exonet_fold_k.pt alongside the overall best.")
     parser.add_argument("--max-unlabeled-negatives", type=int, default=50_000,
