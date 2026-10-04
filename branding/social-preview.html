@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<!-- Source for social-preview.png (GitHub social preview, 1280x640).
+     Re-render: open at a 1280x640 viewport and screenshot. Colors from colors.md. -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  :root {
+    --space-black: #04090f;
+    --deep-navy: #0d1f3c;
+    --cyan: #00c8ff;
+    --gold: #ffd166;
+    --green: #06d6a0;
+    --light: #e8f4ff;
+    --muted: #8aa4c2;
+  }
+  * { margin: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    background: radial-gradient(circle at 24% 50%, var(--deep-navy) 0%, var(--space-black) 62%);
+    color: var(--light);
+    font-family: 'Trebuchet MS', 'Gill Sans', Arial, sans-serif;
+    display: flex; align-items: center;
+    padding: 0 88px 0 72px; gap: 64px;
+  }
+  .logo { width: 400px; height: 400px; flex: none; }
+  .copy { flex: 1; }
+  .eyebrow {
+    color: var(--cyan); font-size: 22px; letter-spacing: 0.32em;
+    text-transform: uppercase; margin-bottom: 22px;
+  }
+  h1 { font-size: 62px; line-height: 1.08; font-weight: 700; margin-bottom: 26px; }
+  h1 em { font-style: normal; color: var(--green); }
+  p { font-size: 27px; line-height: 1.4; color: var(--light); opacity: 0.88; max-width: 640px; }
+  .foot {
+    position: absolute; left: 0; right: 0; bottom: 30px;
+    display: flex; justify-content: space-between; padding: 0 72px;
+    font-size: 18px; color: var(--muted); letter-spacing: 0.04em;
+  }
+  .foot b { color: var(--cyan); font-weight: 400; }
+</style>
+</head>
+<body>
+  <img class="logo" src="logo.svg" alt="">
+  <div class="copy">
+    <div class="eyebrow">Lumina &middot; Exoplanet Hunter</div>
+    <h1>Help find <em>new worlds</em> with your idle computer.</h1>
+    <p>Volunteer PCs search NASA's public telescope data for the tiny dips in starlight that reveal a planet.</p>
+  </div>
+  <div class="foot">
+    <span><b>github.com/MBarc/Lumina-Exoplanet-Hunter</b></span>
+    <span>Independent open-source project &middot; not affiliated with NASA</span>
+  </div>
+</body>
+</html>
