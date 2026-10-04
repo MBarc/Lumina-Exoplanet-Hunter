@@ -10,8 +10,6 @@
 [![Status: in development](https://img.shields.io/badge/status-in%20development-orange)](#where-things-stand)
 [![Data: NASA Kepler](https://img.shields.io/badge/data-NASA%20Kepler-00c8ff)](#where-does-the-data-come-from)
 
-### [Visit Mission Control, the project website](https://mbarc.github.io/Lumina-Exoplanet-Hunter/)
-
 The installer isn't out yet. **Watch** or **star** this repository to hear when it is.
 
 </div>
@@ -27,8 +25,10 @@ in 2021.
 I'm building Lumina to do that search on volunteers' spare computing time
 instead of one big computer. Once it's released, you'll install it and it will
 work through stars in the background while you get on with your day. Anything
-that looks like a planet will go to experts for review. Lumina is an independent project. It isn't run by NASA, and
-NASA hasn't endorsed it.
+that looks like a planet will go to experts for review. Lumina is an
+independent project. It isn't run by NASA, and NASA hasn't endorsed it.
+
+**[Open Mission Control](https://mbarc.github.io/Lumina-Exoplanet-Hunter/)** &nbsp;&nbsp; **[How it works](#your-computer-does-the-searching)** &nbsp;&nbsp; **[Where things stand](#where-things-stand)** &nbsp;&nbsp; **[FAQ](#faq)**
 
 ## What a planet looks like in the data
 
