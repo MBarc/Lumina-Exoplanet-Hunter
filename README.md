@@ -22,10 +22,10 @@ tools still finds more: NASA's own ExoMiner model
 [added 301 Kepler planets](https://www.nasa.gov/missions/kepler/new-deep-learning-method-adds-301-planets-to-keplers-total-count/)
 in 2021.
 
-Lumina is my go at that search, spread across volunteers' computers instead of
-one big one. You install it, it works through stars in the background while
-you get on with your day, and anything that looks like a planet goes to people
-for a proper look. Lumina is an independent project. It isn't run by NASA, and
+I'm building Lumina to do that search on volunteers' spare computing time
+instead of one big computer. Once it's released, you'll install it and it will
+work through stars in the background while you get on with your day. Anything
+that looks like a planet will go to experts for review. Lumina is an independent project. It isn't run by NASA, and
 NASA hasn't endorsed it.
 
 ## What a planet looks like in the data
@@ -34,9 +34,10 @@ NASA hasn't endorsed it.
 <img src="branding/transit-kepler-13b.svg" width="100%" alt="A light curve of Kepler-13 b: a flat line of brightness that drops into a deep, rounded dip and climbs back up">
 </p>
 
-<sub>Kepler-13 b, a confirmed planet, as Lumina sees it: every transit in the
-Kepler data folded on top of each other. The vertical scale is stretched so the
-dip is easy to see. Drawn from Lumina's own preprocessed Kepler data.</sub>
+<sub>Kepler-13 b, a confirmed planet, as Lumina sees it: its transits in the
+Kepler data from MAST, lined up and folded together around the dip. Brightness
+is rescaled for the model, so the depth of the dip here is not the percentage
+of light blocked.</sub>
 
 That dip is the planet passing in front of its star and blocking a little of
 its light, often less than one percent. One dip on its own could be anything.
@@ -55,25 +56,23 @@ This is how it will work once the installer is out:
    looks for repeating dips.
 5. It sends back anything that looks like a planet.
 
-The more computers join, the faster the search goes.
-
 ## What happens when it finds something
 
-Your computer flags it as a **candidate**: something that might be a planet.
-It isn't a planet yet. A candidate has to be reviewed by experts and then
-confirmed, by follow-up observation or statistical validation, before it
+Your computer will flag it as a **candidate**: something that might be a
+planet. A candidate isn't a confirmed planet. Experts have to review it and
+then confirm it, by follow-up observation or statistical validation, before it
 counts.
 
-You also get to give your candidate a nickname. The nickname stays attached to
-it inside ExoNet, and only there. Official names for exoplanets come from the
-International Astronomical Union's own naming campaigns
-([NameExoWorlds](https://www.nameexoworlds.iau.org/)), and finding something
-through Lumina doesn't make anyone eligible for one.
+You'll also get to give your candidate a nickname. The nickname stays attached
+to it inside ExoNet, and only there. Official names for exoplanets come from
+the International Astronomical Union's own naming campaigns
+([NameExoWorlds](https://www.nameexoworlds.iau.org/)), and finding a candidate
+through Lumina gives you no automatic right to an official name.
 
 ## Watch it work
 
-Every computer running Lumina gets its own dashboard, a page you open in your
-browser. It runs entirely on your machine, with no account and no internet
+Every computer running Lumina will get its own dashboard, a page you open in
+your browser. It runs entirely on your machine, with no account and no internet
 connection needed to look at it. It shows which stars you're working on, how
 many are done, brightness curves as they're processed, and anything your
 computer has flagged.
