@@ -131,7 +131,7 @@ function buildTicker(stats) {
     ["MODEL",      stats && stats.model_version ? stats.model_version.toUpperCase() : "EXONET v2.0"],
     ["QUEUE",      stats ? formatNumber(stats.queue_remaining) + " TARGETS REMAINING" : "—"],
     ["ALGORITHM",  "BLS + RESIDUAL CNN"],
-    ["MISSIONS",   "KEPLER  ·  K2  ·  TESS"],
+    ["MISSIONS",   "KEPLER  (K2 AND TESS PLANNED)"],
     ["TARGET",     "EXOPLANET TRANSIT DETECTION"],
   ];
 

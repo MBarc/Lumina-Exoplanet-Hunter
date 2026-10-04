@@ -1,100 +1,162 @@
 <div align="center">
-  <img src="branding/logo.svg" alt="Lumina Logo" width="220"/>
-</div>
+
+<img src="branding/logo.svg" width="160" alt="The Lumina logo: a star, a planet passing in front of it, and the dip that makes in a line of starlight">
 
 # Lumina
 
-**A distributed computing network for the detection of exoplanet candidates across open astronomical datasets.**
+**Lend your computer's spare time to the search for planets around other stars.**
 
----
+[![Licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
+[![Status: in development](https://img.shields.io/badge/status-in%20development-orange)](#where-things-stand)
+[![Data: NASA Kepler](https://img.shields.io/badge/data-NASA%20Kepler-00c8ff)](#where-does-the-data-come-from)
 
-## What Is This?
+The installer isn't out yet. **Watch** or **star** this repository to hear when it is.
 
-Lumina is an open-source project that turns idle computers into exoplanet search nodes. Every participating machine downloads, processes, and analyzes stellar light curve data from NASA and other space missions — automatically, in the background, while you go about your day.
+</div>
 
-Together, these machines form **ExoNet**: a volunteer-powered network working toward a single goal — finding worlds beyond our solar system.
+NASA's Kepler telescope spent years measuring the brightness of hundreds of
+thousands of stars, and all of that data is public. A planet shows up in it as
+a tiny dip in its star's light that comes back every orbit. Thousands of
+planets have been found that way, and going back through the archive with new
+tools still finds more: NASA's own ExoMiner model
+[added 301 Kepler planets](https://www.nasa.gov/missions/kepler/new-deep-learning-method-adds-301-planets-to-keplers-total-count/)
+in 2021.
 
----
+I'm building Lumina to do that search on volunteers' spare computing time
+instead of one big computer. Once it's released, you'll install it and it will
+work through stars in the background while you get on with your day. Anything
+that looks like a planet will go to experts for review. Lumina is an
+independent project. It isn't run by NASA, and NASA hasn't endorsed it.
 
-## The Problem
+**[Open Mission Control](https://mbarc.github.io/Lumina-Exoplanet-Hunter/)** &nbsp;&nbsp; **[How it works](#your-computer-does-the-searching)** &nbsp;&nbsp; **[Where things stand](#where-things-stand)** &nbsp;&nbsp; **[FAQ](#faq)**
 
-Space telescopes like TESS, Kepler, and K2 have produced an enormous archive of stellar light curve data. Hidden within that data are the faint, periodic dimming signatures of planets transiting their host stars. The archive grows faster than it can be analyzed.
+## What a planet looks like in the data
 
-There are more potential exoplanet candidates waiting in existing data than current resources allow us to find.
+<p>
+<img src="branding/transit-kepler-13b.svg" width="100%" alt="A light curve of Kepler-13 b: a flat line of brightness that drops into a deep, rounded dip and climbs back up">
+</p>
 
----
+<sub>Kepler-13 b, a confirmed planet, as Lumina sees it: its transits in the
+Kepler data from MAST, lined up and folded together around the dip. Brightness
+is rescaled for the model, so the depth of the dip here is not the percentage
+of light blocked.</sub>
 
-## How It Works
+That dip is the planet passing in front of its star and blocking a little of
+its light, often less than one percent. One dip on its own could be anything.
+A dip that repeats on a fixed schedule, with the same depth and shape every
+time, is what a planet looks like. That's the pattern Lumina hunts for, star by
+star.
 
-1. **Install** the Lumina client on any Windows machine
-2. The client runs quietly as a **background service** — no interaction required
-3. It connects to the ExoNet coordination network, claims an unprocessed data sector, and begins analysis
-4. Light curves are retrieved from mission archives (TESS, Kepler, K2, and others), processed locally, and screened for transit signatures
-5. Candidate detections are reported back to the network for further review
+## Your computer does the searching
 
-The more machines participating, the faster the full archive gets covered.
+This is how it will work once the installer is out:
 
----
+1. You install Lumina on a Windows PC. No astronomy or programming needed.
+2. It runs quietly in the background.
+3. It gets a batch of stars from the network, which is called ExoNet.
+4. It downloads those stars' brightness records from NASA's public archive and
+   looks for repeating dips.
+5. It sends back anything that looks like a planet.
 
-## Supported Missions
+## What happens when it finds something
 
-Lumina is designed to work with any mission that produces light curve data, including:
+Your computer will flag it as a **candidate**: something that might be a
+planet. A candidate isn't a confirmed planet. Experts have to review it and
+then confirm it, by further observation or statistical validation, before it
+counts.
 
-- **TESS** (Transiting Exoplanet Survey Satellite)
-- **Kepler**
-- **K2**
-- Additional missions as support is added
+You'll also get to give your candidate a nickname. The nickname stays attached
+to it inside ExoNet, and only there. Official names for exoplanets come from
+the International Astronomical Union's own naming campaigns
+([NameExoWorlds](https://www.nameexoworlds.iau.org/)), and finding a candidate
+through Lumina gives you no automatic right to an official name.
 
----
+## Watch it work
 
-## Getting Started
+Every computer running Lumina will get its own dashboard, a page you open in
+your browser. It runs entirely on your machine, with no account and no internet
+connection needed to look at it. It shows which stars you're working on, how
+many are done, brightness curves as they're processed, and anything your
+computer has flagged.
 
-Download the installer and run it. That's it.
+[Mission Control](https://mbarc.github.io/Lumina-Exoplanet-Hunter/) is the
+view of the whole network. It will start filling up once the installer is out
+and the first volunteers join.
 
-The installer will configure your machine, set up the background service, and connect you to the ExoNet network automatically. No astronomy background required.
+## Where things stand
 
-> *Installer and setup instructions coming soon.*
+I'm building Lumina on my own, and it's still in development.
 
----
+| Mission | Status |
+|---|---|
+| Kepler | The detection model is trained and tested on Kepler data |
+| K2 | Planned |
+| TESS (Transiting Exoplanet Survey Satellite) | Planned, and next in line |
 
-## Local Dashboard
+The current Kepler training set has 162,687 possible signals from 53,634
+stars. 2,026 of those line up with planets and planet candidates already in
+NASA's catalogue, and those are what the model learns a planet looks like
+from.
 
-Every ExoNet node includes a locally hosted web dashboard accessible from your browser. No account or internet connection required to view it — it runs entirely on your machine.
+The model isn't as accurate as published Kepler models yet. Treat anything it
+flags as a lead worth checking, not a discovery.
 
-The dashboard lets you see:
+## FAQ
 
-- Which mission and sector your machine is currently processing
-- How many stars have been analyzed and how many remain
-- A live feed of light curves as they are processed, with transit detections highlighted
-- Any candidate signals your machine has flagged for review
-- Your node's contribution to the broader ExoNet network over time
+### Is this a NASA project?
 
-It is designed to be left open in a browser tab — something you can glance at while working.
+No. Lumina uses NASA's public data, but it's an independent volunteer project.
+Nobody at NASA runs it or has endorsed it.
 
----
+### Is it free?
 
-## If Your Machine Finds a Candidate
+Yes. There's no account and nothing to pay. The code is open source under the
+MIT licence, so anyone can read it and check what it does.
 
-When your node detects a statistically significant transit signal, you will be notified through the dashboard. You will also have the opportunity to assign a **nickname** to the candidate — a name that will be associated with it permanently within ExoNet.
+### Will it slow down my computer?
 
-If the candidate is later confirmed as a genuine exoplanet through follow-up observation, that nickname becomes your nomination for the planet's official name.
+It's designed to run in the background on spare computing time. I'll publish
+exactly what it uses once there's a release to measure.
 
-Official exoplanet naming is governed by the **International Astronomical Union (IAU)**, which periodically runs public naming campaigns (NameExoWorlds) for confirmed exoplanets. ExoNet does not guarantee official recognition, but confirmed candidates discovered through this project will be submitted through proper IAU channels with the discoverer's nominated name on record.
+### Where does the data come from?
 
-The universe is large. Your name could end up on a world orbiting another star.
+The brightness records come from NASA's public archive of Kepler data, the
+Mikulski Archive for Space Telescopes (MAST). The list of known planets and
+candidates that the model learns from comes from the NASA Exoplanet Archive.
 
----
+### Does it work on a Mac?
 
-## For Researchers & Developers
+Not at first. The installer is Windows only.
 
-Lumina is fully open source. If you are interested in contributing to the detection pipeline, extending mission support, or integrating candidate data into your own research workflows, see the project source and open an issue or pull request.
+### Can I help without installing anything?
 
----
+Yes. If you'd like to work on the detection model, add another mission, or use
+the candidate data in your own research,
+[open an issue](https://github.com/MBarc/Lumina-Exoplanet-Hunter/issues)
+(GitHub's name for a request or bug report) or send a pull request.
 
-## Why This Matters
+## For developers
 
-Every candidate flagged by ExoNet is a star worth a closer look — a potential system with a planet in orbit, possibly within a habitable zone. The data is already out there. This project exists to make sure none of it goes unexamined.
+Lumina is Python throughout.
 
----
+```text
+ml/           the ExoNet detection model: preprocessing, training, calibration, inference
+data_tools/   downloading Kepler light curves (FITS files) from MAST
+api/          the ExoNet coordination API (FastAPI and MongoDB)
+scheduler/    the service that hands out batches of stars
+dashboard/    the local dashboard each volunteer computer runs
+services/     the Windows background service
+Installer/    the Windows installer
+docs/         Mission Control, published with GitHub Pages
+branding/     logo, colours and images
+```
 
-*Lumina is an independent open-source initiative and is not affiliated with NASA or any space agency.*
+## Licence
+
+MIT, see [LICENSE](LICENSE).
+
+## Legal
+
+Lumina is an independent project and is not affiliated with, endorsed by, or
+supported by NASA or any other space agency. Kepler data is provided by the
+Mikulski Archive for Space Telescopes (MAST) and the NASA Exoplanet Archive.
