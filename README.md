@@ -10,6 +10,8 @@
 [![Status: in development](https://img.shields.io/badge/status-in%20development-orange)](#where-things-stand)
 [![Data: NASA Kepler](https://img.shields.io/badge/data-NASA%20Kepler-00c8ff)](#where-does-the-data-come-from)
 
+### [Visit Mission Control, the project website](https://mbarc.github.io/Lumina-Exoplanet-Hunter/)
+
 The installer isn't out yet. **Watch** or **star** this repository to hear when it is.
 
 </div>
@@ -60,7 +62,7 @@ This is how it will work once the installer is out:
 
 Your computer will flag it as a **candidate**: something that might be a
 planet. A candidate isn't a confirmed planet. Experts have to review it and
-then confirm it, by follow-up observation or statistical validation, before it
+then confirm it, by further observation or statistical validation, before it
 counts.
 
 You'll also get to give your candidate a nickname. The nickname stays attached

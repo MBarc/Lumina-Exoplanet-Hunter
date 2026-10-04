@@ -1,11 +1,11 @@
 # GitHub repo metadata
 
-What the repo's About box is set to. Audience: non-technical NASA staff, so plain
+What the repo's About box is set to. Audience: NASA staff who aren't technical, so plain
 words first, jargon only in topics (where it helps search).
 
 ## Description
 
-> Volunteer computers search NASA's public Kepler data for tiny dips in starlight that could signal a planet. Public installer coming soon. Open source and independent — not affiliated with NASA.
+> Volunteer computers search NASA's public Kepler data for tiny dips in starlight that could signal a planet. Public installer coming soon. Open source and independent, not affiliated with NASA.
 
 ## Website
 
