@@ -5,7 +5,7 @@ words first, jargon only in topics (where it helps search).
 
 ## Description
 
-> Volunteer computers search NASA's public Kepler telescope data for the tiny dips in starlight that could mean a new planet. Open source and independent — not affiliated with NASA.
+> Volunteer computers search NASA's public Kepler data for tiny dips in starlight that could signal a planet. Public installer coming soon. Open source and independent — not affiliated with NASA.
 
 ## Website
 
@@ -13,9 +13,11 @@ https://mbarc.github.io/Lumina-Exoplanet-Hunter/ (Mission Control, live network 
 
 ## Topics
 
-`exoplanets` `exoplanet-detection` `astronomy` `space` `kepler` `tess` `nasa-data`
+`exoplanets` `exoplanet-detection` `astronomy` `space` `kepler` `nasa-data`
 `citizen-science` `volunteer-computing` `distributed-computing` `machine-learning`
 `light-curves` `transit-photometry`
+
+Add `tess` / `k2` once that data is actually processed.
 
 ## Social preview
 
