@@ -70,7 +70,7 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.model_selection import StratifiedGroupKFold
 from torch.utils.data import DataLoader, Dataset, Subset, WeightedRandomSampler
 
 from ml.inference import ExoNetInference
@@ -2952,16 +2952,22 @@ def train(args: argparse.Namespace) -> None:
     # gives consistent class counts across folds while keeping soft values for loss.
     strat_labels = (labels >= _POSITIVE_LABEL_THRESHOLD).astype(int)
 
-    # ── Held-out test set (10%) ───────────────────────────────────────────────
-    # Stratified split on binarized labels. This set is NEVER used for model
-    # selection, threshold tuning, or calibration — only for final reporting.
-    test_size = max(int(0.10 * len(dataset)), 10)
+    # Star-grouped splits: every sample from one star lands on the same side of
+    # every split. Each star yields several BLS peaks; splitting them across
+    # train and test leaked the star and inflated test AUC by +0.08 last run.
+    # Samples with no kepid get a unique group, so an old cache without kepids
+    # splits exactly like plain stratification.
+    groups = np.array([k if k else f"_{i}" for i, k in enumerate(dataset._kepids)])
+    _log(f"  Star-grouped splits: {len(np.unique(groups))} groups over {len(groups)} samples")
+
+    # ── Held-out test set (~10%) ──────────────────────────────────────────────
+    # Stratified, star-grouped split on binarized labels. This set is NEVER
+    # used for model selection, threshold tuning, or calibration — only for
+    # final reporting.
     # E2: use the CLI seed for train/test split reproducibility.
-    train_val_idx, test_idx = train_test_split(
-        indices,
-        test_size=test_size,
-        stratify=strat_labels,
-        random_state=seed,
+    train_val_idx, test_idx = next(
+        StratifiedGroupKFold(n_splits=10, shuffle=True, random_state=seed)
+        .split(indices, strat_labels, groups)
     )
     _log(f"  Held-out test set: {len(test_idx)} samples ({100*len(test_idx)/len(dataset):.1f}%)")
 
@@ -2969,12 +2975,13 @@ def train(args: argparse.Namespace) -> None:
     indices_cv = train_val_idx
     labels_cv  = labels[train_val_idx]
     strat_cv   = strat_labels[train_val_idx]
+    groups_cv  = groups[train_val_idx]
 
     n_splits = min(args.folds, int(min(np.sum(strat_cv == 0), np.sum(strat_cv == 1))))
     n_splits = max(n_splits, 2)
 
     # E2: use the CLI seed for cross-validation split reproducibility.
-    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    skf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
     fold_aucs: list[float] = []
 
     overall_best_auc   = -1.0
@@ -2990,7 +2997,7 @@ def train(args: argparse.Namespace) -> None:
          f"({len(indices_cv)} train/val samples, device={device})")
 
     cv_t_start = time.time()
-    for fold, (train_idx, val_idx) in enumerate(skf.split(indices_cv, strat_cv), start=1):
+    for fold, (train_idx, val_idx) in enumerate(skf.split(indices_cv, strat_cv, groups_cv), start=1):
         # Fully completed folds (incl. SWA) leave a fold_complete_{N}.json
         # marker with their results — skip retraining and reuse the stored
         # OOF scores.  Delete the marker to force a retrain.
