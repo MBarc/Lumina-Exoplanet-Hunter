@@ -39,7 +39,7 @@ This is the planned volunteer workflow once the installer is released:
 
 1. **Install** the Lumina client on a Windows PC
 2. It runs quietly in the **background** — no interaction required
-3. It joins the ExoNet network and is handed a batch of stars nobody has checked yet
+3. It joins the ExoNet network and is handed a batch of stars awaiting analysis by ExoNet
 4. It downloads those stars' brightness records (Kepler today; TESS and K2 planned) and looks for repeating dips
 5. Possible planet signals are sent back to the network for review
 
