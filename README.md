@@ -1,10 +1,13 @@
 <div align="center">
-  <img src="branding/logo.svg" alt="Lumina Logo" width="220"/>
-</div>
+  <img src="branding/logo.svg" alt="Lumina logo: a star, a passing planet, and the dip in starlight it causes" width="220"/>
 
 # Lumina
 
-**A distributed computing network for the detection of exoplanet candidates across open astronomical datasets.**
+**Volunteer computers searching NASA's public telescope data for new worlds.**
+
+[Mission Control (live network)](https://mbarc.github.io/Lumina-Exoplanet-Hunter/) · [How it works](#how-it-works) · [Project status](#project-status)
+
+</div>
 
 ---
 
@@ -13,6 +16,14 @@
 Lumina is an open-source project that turns idle computers into exoplanet search nodes. Every participating machine downloads, processes, and analyzes stellar light curve data from NASA and other space missions — automatically, in the background, while you go about your day.
 
 Together, these machines form **ExoNet**: a volunteer-powered network working toward a single goal — finding worlds beyond our solar system.
+
+---
+
+## How Do You Find a Planet You Can't See?
+
+When a planet passes in front of its star, it blocks a tiny fraction of the star's light — often less than one percent. A telescope watching that star records a brief, regular dip in brightness, repeating every time the planet completes an orbit. That is the picture in the Lumina logo: a star, a planet, and the dip it leaves in the line below.
+
+Missions like Kepler watched hundreds of thousands of stars this way. Lumina's job is to look through those brightness records, star by star, for dips that repeat like a planet's would.
 
 ---
 
@@ -36,24 +47,25 @@ The more machines participating, the faster the full archive gets covered.
 
 ---
 
-## Supported Missions
+## Project Status
 
-Lumina is designed to work with any mission that produces light curve data, including:
+Lumina is in active development by an independent volunteer.
 
-- **TESS** (Transiting Exoplanet Survey Satellite)
-- **Kepler**
-- **K2**
-- Additional missions as support is added
+| Mission | Status |
+|---|---|
+| **Kepler** | Being searched now — the detection model is trained and tested on Kepler data |
+| **K2** | Planned |
+| **TESS** (Transiting Exoplanet Survey Satellite) | Planned — next priority |
+
+The Windows installer is not public yet. Signals Lumina flags are *candidates*: possible planets that still need review and follow-up observation by astronomers before anyone can call them planets.
 
 ---
 
 ## Getting Started
 
-Download the installer and run it. That's it.
+> *The installer is not public yet. Watch or star this repository to hear when it is.*
 
-The installer will configure your machine, set up the background service, and connect you to the ExoNet network automatically. No astronomy background required.
-
-> *Installer and setup instructions coming soon.*
+Once it's released, setup is meant to be: download the installer and run it. It configures your machine, sets up the background service, and connects you to the ExoNet network automatically. No astronomy or programming background required.
 
 ---
 
