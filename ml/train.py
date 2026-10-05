@@ -79,6 +79,26 @@ from ml.preprocess import preprocess, preprocess_multi
 
 # Regex to extract the 9-digit Kepler kepid from a filename (e.g. kplr002440757_llc.fits)
 _KEPLER_KEPID_RE = re.compile(r'kplr(\d{9})')
+_TESS_TIC_RE     = re.compile(r'tess\d+-s\d+-(\d+)-|tic(\d+)')
+_K2_STAR_RE      = re.compile(r'ktwo(\d+)|k2_lightcurve_(\d+)')
+
+
+def _star_key(fits_key: str, mission: str) -> tuple[str, int | None]:
+    """(star id stored in the cache, numeric catalogue id) for a light-curve path.
+
+    Star ids are mission-qualified so star-grouped splits never merge stars
+    across missions: Kepler keeps the bare 9-digit kepid (compatible with
+    existing caches), TESS is "tic<id>", K2 "epic<id>". ("", None) if unknown.
+    """
+    name = Path(fits_key).name.lower()
+    rx, prefix = {"kepler": (_KEPLER_KEPID_RE, ""), "tess": (_TESS_TIC_RE, "tic"),
+                  "k2": (_K2_STAR_RE, "epic")}.get(mission.lower(), (None, ""))
+    m = rx.search(name) if rx else None
+    if not m:
+        return "", None
+    digits = next(g for g in m.groups() if g)
+    num = int(digits)
+    return (digits if mission.lower() == "kepler" else f"{prefix}{num}"), num
 
 # Regex to extract the EPIC ID from a K2 HLSP filename
 # e.g. hlsp_kegs_k2_lightcurve_205962305-c03_kepler_v2_llc.fits → 205962305
@@ -276,7 +296,7 @@ _KOI_PERIOD_TAP_URL = (
 )
 _TOI_TAP_URL = (
     "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
-    "?query=select+tid,tfopwg_disp+from+toi&format=csv"
+    "?query=select+tid,tfopwg_disp,pl_orbper+from+toi&format=csv"
 )
 _K2_TAP_URL = (
     "https://exoplanetarchive.ipac.caltech.edu/TAP/sync"
@@ -444,46 +464,55 @@ def _matches_koi_period(period: float, catalogued: list[float]) -> bool:
     return False
 
 
-def download_toi_table() -> list[tuple[int, float]]:
+def download_toi_table() -> tuple[list[tuple[int, float]], dict[int, list[float]]]:
     """
     Fetch the TESS TOI table from NASA Exoplanet Archive via TAP.
 
     Returns
     -------
-    list of (tid, label) tuples where label is 0.0 or 1.0.
+    (records, periods)
+      records: one (tic, label) per star — a star with several TOIs keeps its
+               highest label (a planet host stays a host even if it also has a
+               false-positive TOI); per-signal labels come from period matching.
+      periods: tic -> catalogued periods (days) of its planet-like TOIs, used
+               to demote BLS peaks on hosts that match no catalogued planet.
     """
     _log("  Contacting NASA Exoplanet Archive (TESS TOI table) ...")
     t_start = time.time()
     try:
         text = _stream_download(_TOI_TAP_URL, "TESS TOI")
     except requests.RequestException as exc:
-        _log(f"  WARNING: Failed to download TESS TOI table: {exc}. Skipping.")
-        return []
-
-    if not text.strip():
-        _log("  WARNING: TESS TOI table response was empty. Skipping.")
-        return []
+        # Must abort, like the KOI period table: a TESS cache built without
+        # period matching would silently get wrong-peak positive labels.
+        raise RuntimeError(f"Failed to download TESS TOI table: {exc}") from exc
 
     reader = csv.DictReader(io.StringIO(text))
-    if reader.fieldnames is None or "tid" not in reader.fieldnames or "tfopwg_disp" not in reader.fieldnames:
-        _log(f"  WARNING: Unexpected TESS TOI columns: {reader.fieldnames}. Skipping.")
-        return []
+    if reader.fieldnames is None or not {"tid", "tfopwg_disp", "pl_orbper"} <= set(reader.fieldnames):
+        raise RuntimeError(f"Unexpected TESS TOI columns: {reader.fieldnames}")
 
-    records: list[tuple[int, float]] = []
+    best: dict[int, float] = {}
+    periods: dict[int, list[float]] = {}
     for row in reader:
         try:
             tid = int(row["tid"].strip())
         except (ValueError, KeyError):
             continue
         label = _tess_disposition_to_label(row.get("tfopwg_disp", ""))
-        if label is not None:
-            records.append((tid, label))
+        if label is None:
+            continue
+        best[tid] = max(label, best.get(tid, 0.0))
+        try:
+            per = float(row.get("pl_orbper") or "nan")
+        except ValueError:
+            per = float("nan")
+        if label >= _POSITIVE_LABEL_THRESHOLD and per > 0:   # NaN compares False
+            periods.setdefault(tid, []).append(per)
 
-    n_pos = sum(1 for _, l in records if l == 1.0)
-    n_neg = sum(1 for _, l in records if l == 0.0)
-    _log(f"  Parsed {len(records)} labelled TOIs in {_fmt_elapsed(time.time() - t_start)}  "
-         f"|  {n_pos} positives  {n_neg} negatives")
-    return records
+    records = list(best.items())
+    n_pos = sum(1 for _, l in records if l >= _POSITIVE_LABEL_THRESHOLD)
+    _log(f"  Parsed {len(records)} labelled TESS stars in {_fmt_elapsed(time.time() - t_start)}  "
+         f"|  {n_pos} planet hosts  {len(records) - n_pos} negatives  |  periods for {len(periods)} hosts")
+    return records, periods
 
 
 def download_k2_table() -> list[tuple[int, float]]:
@@ -799,6 +828,7 @@ class MultiMissionDataset(Dataset):
         preprocess_workers: int = 1,
         checkpoint_every: int = 100,
         fits_index_file: str | Path | None = None,
+        missions: tuple[str, ...] = ("kepler", "tess", "k2"),
     ) -> None:
         self.fits_dir   = Path(fits_dir)
         # Skip mkdir when loading from an existing cache file — avoids requiring
@@ -879,26 +909,16 @@ class MultiMissionDataset(Dataset):
         _log("  Building MultiMission dataset")
         _log("=" * 65)
 
-        # ── Step 1-2: Kepler ──────────────────────────────────────────────────
-        _log("\n[Step 1/6]  Downloading Kepler label table ...")
-        if csv_path is not None:
-            koi_records = self._load_koi_csv(Path(csv_path))
-            _log(f"  Loaded {len(koi_records)} records from local CSV: {csv_path}")
-        else:
-            koi_records = download_koi_table()
-
-        # Catalogued planet periods, used to period-match labels during
-        # integration. A failure here must abort: rebuilding the cache without
-        # period matching would silently reintroduce the ~89% wrong-peak
-        # positive labels.
-        koi_periods = download_koi_periods()
-
-        # Download stellar params (for scalar feature expansion)
+        missions = tuple(m.lower() for m in missions)
+        _log(f"  Missions: {', '.join(missions)}")
+        kepler_pairs = kepler_neg_pairs = tess_pairs = k2_pairs = k2_neg_pairs = []
+        # Catalogued planet periods per mission, keyed by numeric star id. Used
+        # to period-match labels during integration: only the BLS peak that
+        # matches a catalogued planet keeps a planet host's positive label.
+        catalog_periods: dict[str, dict[int, list[float]]] = {}
         stellar_params: dict[str, np.ndarray] = {}
-        if not cache_only:
-            stellar_params = download_stellar_params()
 
-        # Build the FITS index once — shared by all three resolve steps.
+        # Build the FITS index once — shared by all resolve steps.
         if self._fits_index_file is not None:
             fits_index = _load_fits_index_file(Path(self._fits_index_file))
         else:
@@ -907,38 +927,57 @@ class MultiMissionDataset(Dataset):
         if self.cache_only:
             _log("  --cache-only: MAST downloads disabled. Using local cache only.")
 
-        _log(f"\n[Step 2/6]  Resolving Kepler FITS files  ({len(koi_records)} labeled targets) ...")
-        kepler_pairs = self._resolve_kepler(koi_records, fits_index, self.cache_only)
+        # ── Step 1-2: Kepler ──────────────────────────────────────────────────
+        if "kepler" in missions:
+            _log("\n[Step 1/6]  Downloading Kepler label table ...")
+            if csv_path is not None:
+                koi_records = self._load_koi_csv(Path(csv_path))
+                _log(f"  Loaded {len(koi_records)} records from local CSV: {csv_path}")
+            else:
+                koi_records = download_koi_table()
 
-        # Add unlabeled Kepler stars as negatives: non-KOI targets have no known
-        # transit signal and are genuine negatives for the classifier.
-        labeled_kepids = {str(kepid).zfill(9) for kepid, _ in koi_records}
-        kepler_neg_pairs = self._resolve_kepler_unlabeled(
-            fits_index, labeled_kepids, max_targets=max_unlabeled
-        )
-        _log(f"  Kepler unlabeled negatives: {len(kepler_neg_pairs)} targets added (label=0.0)")
+            # A failure here must abort: rebuilding the cache without period
+            # matching would silently reintroduce the ~89% wrong-peak positives.
+            catalog_periods["kepler"] = download_koi_periods()
+
+            # Download stellar params (for scalar feature expansion)
+            if not cache_only:
+                stellar_params = download_stellar_params()
+
+            _log(f"\n[Step 2/6]  Resolving Kepler FITS files  ({len(koi_records)} labeled targets) ...")
+            kepler_pairs = self._resolve_kepler(koi_records, fits_index, self.cache_only)
+
+            # Add unlabeled Kepler stars as negatives: non-KOI targets have no known
+            # transit signal and are genuine negatives for the classifier.
+            labeled_kepids = {str(kepid).zfill(9) for kepid, _ in koi_records}
+            kepler_neg_pairs = self._resolve_kepler_unlabeled(
+                fits_index, labeled_kepids, max_targets=max_unlabeled
+            )
+            _log(f"  Kepler unlabeled negatives: {len(kepler_neg_pairs)} targets added (label=0.0)")
 
         # ── Step 3-4: TESS ────────────────────────────────────────────────────
-        _log(f"\n[Step 3/6]  Downloading TESS label table ...")
-        toi_records = download_toi_table()
+        if "tess" in missions:
+            _log(f"\n[Step 3/6]  Downloading TESS label table ...")
+            toi_records, catalog_periods["tess"] = download_toi_table()
 
-        _log(f"\n[Step 4/6]  Resolving TESS FITS files  ({len(toi_records)} targets) ...")
-        tess_pairs = self._resolve_tess(toi_records, fits_index, self.cache_only)
+            _log(f"\n[Step 4/6]  Resolving TESS FITS files  ({len(toi_records)} targets) ...")
+            tess_pairs = self._resolve_tess(toi_records, fits_index, self.cache_only)
 
         # ── Step 5-6: K2 ──────────────────────────────────────────────────────
-        _log(f"\n[Step 5/6]  Downloading K2 label table ...")
-        k2_records = download_k2_table()
+        if "k2" in missions:
+            _log(f"\n[Step 5/6]  Downloading K2 label table ...")
+            k2_records = download_k2_table()
 
-        _log(f"\n[Step 6/6]  Resolving K2 FITS files  ({len(k2_records)} targets) ...")
-        k2_pairs = self._resolve_k2(k2_records, fits_index, self.cache_only)
+            _log(f"\n[Step 6/6]  Resolving K2 FITS files  ({len(k2_records)} targets) ...")
+            k2_pairs = self._resolve_k2(k2_records, fits_index, self.cache_only)
 
-        # Add unlabeled K2 stars as negatives: files in the cache whose EPIC ID
-        # is not in k2pandc are ordinary stars with no known transit candidate.
-        labeled_epics = {str(epic_id) for epic_id, _ in k2_records}
-        k2_neg_pairs = self._resolve_k2_unlabeled(
-            fits_index, labeled_epics, max_targets=max_unlabeled
-        )
-        _log(f"  K2 unlabeled negatives: {len(k2_neg_pairs)} targets added (label=0.0)")
+            # Add unlabeled K2 stars as negatives: files in the cache whose EPIC ID
+            # is not in k2pandc are ordinary stars with no known transit candidate.
+            labeled_epics = {str(epic_id) for epic_id, _ in k2_records}
+            k2_neg_pairs = self._resolve_k2_unlabeled(
+                fits_index, labeled_epics, max_targets=max_unlabeled
+            )
+            _log(f"  K2 unlabeled negatives: {len(k2_neg_pairs)} targets added (label=0.0)")
 
         # ── Merge ─────────────────────────────────────────────────────────────
         # Build tagged list so we can track which mission each sample came from.
@@ -1081,7 +1120,7 @@ class MultiMissionDataset(Dataset):
                     labels          = np.array(self._labels, dtype=np.float32),
                     paths           = np.array(list(already_done)),
                     missions        = np.array(self._missions, dtype="U10"),
-                    kepids          = np.array(self._kepids, dtype="U9"),
+                    kepids          = np.array(self._kepids, dtype="U16"),
                 )
                 os.replace(tmp_file, cp_file)
             except Exception as exc:
@@ -1100,19 +1139,19 @@ class MultiMissionDataset(Dataset):
                 n_skipped += 1
                 return
             n_valid += 1
-            m_re = _KEPLER_KEPID_RE.search(fits_key)
-            kepid_str = m_re.group(1) if m_re else ""
+            mt = mission_tag.lower()
+            star_id, star_num = _star_key(fits_key, mt)
+            kepid_str = star_id if mt == "kepler" else ""   # stellar params are Kepler-only
             for c in candidates:
                 sp = stellar_params.get(kepid_str, np.zeros(5, dtype=np.float32)) if kepid_str else np.zeros(5, dtype=np.float32)
-                mt = mission_tag.lower()
-                # Period-matched labels: on a Kepler planet host, only the BLS
-                # peak matching a catalogued koi_period keeps the positive
-                # label; other peaks are wrong periods on a real host — hard
-                # negatives. Hosts missing from the period table keep their
-                # label (counted, so a systematic gap is visible in the log).
+                # Period-matched labels: on a planet host, only the BLS peak
+                # matching a catalogued planet period (KOI / TOI) keeps the
+                # positive label; other peaks are wrong periods on a real host
+                # — hard negatives. Hosts missing from the period table keep
+                # their label (counted, so a systematic gap shows in the log).
                 eff_label = label
-                if label >= _POSITIVE_LABEL_THRESHOLD and mt == "kepler" and kepid_str:
-                    cat = koi_periods.get(int(kepid_str))
+                if label >= _POSITIVE_LABEL_THRESHOLD and mt in catalog_periods and star_num is not None:
+                    cat = catalog_periods[mt].get(star_num)
                     if not cat:
                         n_pos_no_period += 1
                     elif not _matches_koi_period(float(c.period), cat):
@@ -1145,7 +1184,7 @@ class MultiMissionDataset(Dataset):
                                     c.centroid_curve.astype(np.float32), scalar, eff_label))
                 self._labels.append(eff_label)
                 self._missions.append(mission_tag)
-                self._kepids.append(kepid_str)
+                self._kepids.append(star_id)
                 if eff_label >= _POSITIVE_LABEL_THRESHOLD:
                     n_pos_so_far += 1
                 else:
@@ -1221,7 +1260,7 @@ class MultiMissionDataset(Dataset):
                                 centroid_views=cvs,
                                 scalars=scalars, labels=labels,
                                 missions=np.array(self._missions, dtype="U10"),
-                                kepids=np.array(self._kepids, dtype="U9"))
+                                kepids=np.array(self._kepids, dtype="U16"))
             os.replace(_cache_tmp, cache_file)
             if checkpoint_file is not None and checkpoint_file.exists():
                 try:
@@ -2922,6 +2961,7 @@ def train(args: argparse.Namespace) -> None:
         preprocess_workers=getattr(args, "preprocess_workers", 1),
         checkpoint_every=getattr(args, "checkpoint_every", 100),
         fits_index_file=getattr(args, "fits_index_file", None),
+        missions=tuple(getattr(args, "missions", "kepler,tess,k2").split(",")),
     )
 
     if len(dataset) < 10:
@@ -3278,6 +3318,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Number of parallel processes for BLS preprocessing. "
                              "Default 1 (sequential). Set to os.cpu_count()-1 for full parallelism.")
     parser.add_argument("--no-augment",    action="store_true")
+    parser.add_argument("--missions", default="kepler,tess,k2",
+                        help="Comma-separated missions to build into the cache, e.g. 'tess' for a "
+                             "TESS-only cache (merge caches with scripts/merge_caches.py).")
     parser.add_argument("--fits-index-file", type=Path, default=None,
                         help="Pre-generated FITS listing (one path per line) used instead of "
                              "scanning --fits-dir. Avoids rescanning huge network mounts on "
