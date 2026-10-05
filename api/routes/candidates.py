@@ -12,9 +12,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 
 from api import database as db
+from api.routes.nodes import node_name
 from api.schemas import CandidateSubmission, CandidateResponse, ProcessedSubmission
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -29,17 +30,22 @@ def _serialize(doc: dict) -> dict:
 
 
 @router.post("", status_code=201)
-async def submit_candidate(payload: CandidateSubmission):
+async def submit_candidate(request: Request, payload: CandidateSubmission):
     """
     Accept a transit candidate from a worker node.
 
     Also increments the global candidates_found counter in network_stats
     so the public dashboard stat stays current without an expensive
     count() query on every page load.
+
+    Results come from machines we don't control, so every submission is
+    stored unverified until it is reproduced centrally.
     """
     now = datetime.now(timezone.utc)
     doc = payload.model_dump()
+    doc["worker_hostname"] = node_name(request, payload.worker_hostname)
     doc["reported_at"] = now
+    doc["verified"] = False
 
     result = await db.candidates().insert_one(doc)
 
@@ -122,7 +128,7 @@ async def get_candidate(candidate_id: str):
 
 
 @router.post("/processed", status_code=201)
-async def mark_processed(payload: ProcessedSubmission):
+async def mark_processed(request: Request, payload: ProcessedSubmission):
     """
     Record that a worker finished processing a star.
 
@@ -131,6 +137,7 @@ async def mark_processed(payload: ProcessedSubmission):
     Also increments the global stars_analyzed counter.
     """
     now = datetime.now(timezone.utc)
+    payload.worker_hostname = node_name(request, payload.worker_hostname)
     doc = payload.model_dump()
     doc["processed_at"] = now
 

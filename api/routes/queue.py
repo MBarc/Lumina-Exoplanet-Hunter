@@ -11,10 +11,11 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 
 from api import database as db
 from api.config import get_settings
+from api.routes.nodes import node_name
 from api.schemas import QueueItem, PopulateRequest, QueueStatus
 
 router = APIRouter(prefix="/queue", tags=["queue"])
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/queue", tags=["queue"])
 
 @router.get("/next", response_model=list[QueueItem])
 async def get_next_jobs(
+    request:  Request,
     hostname: str = Query(..., description="Calling worker's hostname"),
     limit:    int = Query(10,  description="Number of jobs to claim", ge=1, le=100),
 ):
@@ -40,6 +42,7 @@ async def get_next_jobs(
     settings = get_settings()
     now      = datetime.now(timezone.utc)
     col      = db.work_queue()
+    hostname = node_name(request, hostname)
 
     # ── Re-queue stalled jobs from any worker ─────────────────────────────────
     # Do this before assigning new work so freed slots are available immediately.
@@ -103,13 +106,14 @@ async def get_queue_status():
 
 
 @router.post("/release")
-async def release_jobs(hostname: str = Query(...)):
+async def release_jobs(request: Request, hostname: str = Query(...)):
     """
     Re-queue all jobs currently assigned to this worker.
 
     Called on graceful worker shutdown so jobs aren't held until the
     stall timeout expires.
     """
+    hostname = node_name(request, hostname)
     result = await db.work_queue().update_many(
         {"status": "assigned", "assigned_to": hostname},
         {"$set": {"status": "queued", "assigned_to": None, "assigned_at": None}},

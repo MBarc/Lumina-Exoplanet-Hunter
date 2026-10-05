@@ -51,6 +51,7 @@ def processed_log():    return db()["processed_log"]
 def node_telemetry():   return db()["node_telemetry"]
 def network_stats():    return db()["network_stats"]
 def scheduler_log():    return db()["scheduler_log"]
+def devices():          return db()["devices"]
 
 
 # ── Index definitions ──────────────────────────────────────────────────────────
@@ -89,6 +90,11 @@ async def _ensure_indexes() -> None:
     # node_telemetry: latest heartbeat per node
     await node_telemetry().create_indexes([
         IndexModel([("hostname", ASCENDING), ("reported_at", DESCENDING)]),
+    ])
+
+    # devices: token lookup on every node request (only the SHA-256 is stored)
+    await devices().create_indexes([
+        IndexModel([("token_sha256", ASCENDING)], unique=True),
     ])
 
     # scheduler_log: recent task runs, queried newest-first

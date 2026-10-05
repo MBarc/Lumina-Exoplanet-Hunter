@@ -7,16 +7,17 @@ POST /telemetry/heartbeat — worker reports its current status
 from __future__ import annotations
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from api import database as db
+from api.routes.nodes import node_name
 from api.schemas import HeartbeatRequest
 
 router = APIRouter(prefix="/telemetry", tags=["telemetry"])
 
 
 @router.post("/heartbeat")
-async def heartbeat(payload: HeartbeatRequest):
+async def heartbeat(request: Request, payload: HeartbeatRequest):
     """
     Accept a status heartbeat from a worker node.
 
@@ -28,6 +29,7 @@ async def heartbeat(payload: HeartbeatRequest):
     We upsert by hostname so only the latest document per node is kept,
     rather than growing the collection unboundedly.
     """
+    payload.hostname = node_name(request, payload.hostname)
     doc = payload.model_dump()
     doc["reported_at"] = datetime.now(timezone.utc)
 

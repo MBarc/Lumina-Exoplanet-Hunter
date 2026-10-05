@@ -9,14 +9,17 @@ Responsibilities:
 """
 
 from __future__ import annotations
+import hmac
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from api import database
 from api.config import get_settings
 from api.routes import queue, candidates, telemetry, stats, stars, admin, nodes
+from api.routes.nodes import token_hash
 
 
 # ── Lifespan: connect to MongoDB on startup, disconnect on shutdown ────────────
@@ -62,31 +65,52 @@ _PUBLIC_PREFIXES = ("/health", "/docs", "/openapi", "/stats", "/stars", "/nodes"
 # GET-only public routes — read access is open, writes still require a key
 _PUBLIC_GET_PREFIXES = ("/candidates",)
 
+# Routes a volunteer node may call with its own X-Device-Token. Everything else
+# that isn't public (queue populate, admin) needs the operator's X-API-Key.
+_DEVICE_ROUTES = {
+    ("GET",  "/queue/next"),
+    ("POST", "/queue/release"),
+    ("POST", "/candidates"),
+    ("POST", "/candidates/processed"),
+    ("POST", "/telemetry/heartbeat"),
+}
+
+
+def _unauthorized(detail: str) -> JSONResponse:
+    # Returned, not raised: an HTTPException raised inside middleware bypasses
+    # FastAPI's handlers and reaches the client as a 500.
+    return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"detail": detail})
+
+
 @app.middleware("http")
 async def require_api_key(request: Request, call_next):
     """
-    Enforce API key authentication on non-public routes.
+    Authenticate non-public routes.
 
-    Public routes (stats, stars, health check, docs) are accessible without
-    a key so the GitHub Pages site and anonymous browsers can read them.
-    GET /candidates is also public so the Mission Control site can display
-    recent finds — POST /candidates (worker submissions) still requires a key.
-    Write routes require the X-API-Key header to prevent anyone from
-    polluting the database.
+    Public routes (stats, stars, health check, docs, node enrollment) are open
+    so the GitHub Pages site and anonymous browsers can read them. GET
+    /candidates is public too. Node routes accept a per-device token; the
+    device is attached to request.state so routes record results under the
+    enrolled identity instead of a client-supplied hostname.
     """
     path = request.url.path
+    request.state.device = None
     if any(path.startswith(p) for p in _PUBLIC_PREFIXES):
         return await call_next(request)
 
     if request.method == "GET" and any(path.startswith(p) for p in _PUBLIC_GET_PREFIXES):
         return await call_next(request)
 
-    key = request.headers.get("X-API-Key", "")
-    if key != get_settings().api_key:
-        raise HTTPException(
-            status_code = status.HTTP_401_UNAUTHORIZED,
-            detail      = "Invalid or missing API key.",
-        )
+    token = request.headers.get("X-Device-Token")
+    if token and (request.method, path) in _DEVICE_ROUTES:
+        device = await database.devices().find_one({"token_sha256": token_hash(token), "revoked": False})
+        if device is None:
+            return _unauthorized("Invalid or revoked device token.")
+        request.state.device = device
+        return await call_next(request)
+
+    if not hmac.compare_digest(request.headers.get("X-API-Key", ""), get_settings().api_key):
+        return _unauthorized("Invalid or missing API key.")
     return await call_next(request)
 
 

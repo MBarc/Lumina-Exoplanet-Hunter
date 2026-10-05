@@ -112,6 +112,20 @@ class ActivityPoint(BaseModel):
     count:  int
 
 
+# ── Device enrollment ─────────────────────────────────────────────────────────
+
+class EnrollRequest(BaseModel):
+    """Sent once by the installer to join the network."""
+    hostname:      str = Field(min_length=1, max_length=64)
+    platform:      str = Field("", max_length=32)
+    enroll_token:  str = ""
+
+class EnrollResponse(BaseModel):
+    device_id:     str
+    name:          str      # identity the server records results under
+    device_token:  str      # shown once; only its hash is stored
+
+
 # ── Node info ──────────────────────────────────────────────────────────────────
 
 class NodeInfo(BaseModel):

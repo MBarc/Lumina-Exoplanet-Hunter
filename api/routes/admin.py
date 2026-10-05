@@ -9,7 +9,7 @@ POST /admin/model-refresh   — trigger a model reload on the API (future use)
 from __future__ import annotations
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from api import database as db
 from api.schemas import SchedulerLogEntry
@@ -49,6 +49,15 @@ async def get_scheduler_log(limit: int = 20):
         .to_list(length=limit)
     )
     return docs
+
+
+@router.post("/devices/{device_id}/revoke")
+async def revoke_device(device_id: str):
+    """Revoke one node's token; its next request is rejected with 401."""
+    result = await db.devices().update_one({"device_id": device_id}, {"$set": {"revoked": True}})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Unknown device.")
+    return {"revoked": device_id}
 
 
 @router.post("/model-refresh", status_code=202)
