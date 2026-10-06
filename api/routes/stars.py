@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 from api import database as db
 from api.config import get_settings
 from api.schemas import StarDetail, CandidateResponse
+from api.routes.candidates import VIEW_FIELDS
 
 router = APIRouter(prefix="/stars", tags=["stars"])
 
@@ -72,7 +73,7 @@ async def get_star(tic_id: str):
         _fetch_tic_metadata(tic_id),
         db.candidates().find(
             {"tic_id": tic_id},
-            projection={"global_view": 0, "local_view": 0},
+            projection={v: 0 for v in VIEW_FIELDS},
         ).sort("exonet_score", -1).to_list(length=50),
     )
 

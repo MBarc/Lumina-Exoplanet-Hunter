@@ -134,9 +134,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     who.add_argument("--credit-name", default=None,
                      help="name to credit if a candidate you find is submitted for review (with --credit)")
     who.add_argument("--email", default=None, help="for news about your candidates; never shown publicly")
-    who.add_argument("--public", action="store_true", default=None, help="show --display-name on Mission Control")
-    who.add_argument("--credit", action="store_true", default=None,
-                     help="allow --credit-name on candidate submissions (needs a verified email)")
+    who.add_argument("--public", action=argparse.BooleanOptionalAction, default=None,
+                     help="show (or with --no-public, stop showing) --display-name on Mission Control")
+    who.add_argument("--credit", action=argparse.BooleanOptionalAction, default=None,
+                     help="allow (or --no-credit, withdraw) --credit-name on candidate submissions "
+                          "(needs a verified email)")
     ap.add_argument("--uninstall", action="store_true", help="remove the service and program files")
     ap.add_argument("--purge", action="store_true", help="with --uninstall, also delete data, config and logs")
     args = ap.parse_args(argv)
@@ -209,21 +211,23 @@ def build_runtime(args) -> Path:
 
 
 def profile_from_args(args) -> dict | None:
-    """Finder details given on the command line / installer window, or None if none were."""
+    """Only the finder details actually given (flags / installer window), or None.
+
+    The server applies them as a partial update, so leaving a flag out never
+    wipes what is stored, and --no-public / --no-credit withdraw consent.
+    """
     fields = {"display_name": args.display_name, "credit_name": args.credit_name, "email": args.email,
               "show_publicly": args.public, "credit_in_submissions": args.credit}
-    if all(v is None for v in fields.values()):
-        return None
-    return {k: (v if v is not None else (False if k in ("show_publicly", "credit_in_submissions") else ""))
-            for k, v in fields.items()}
+    given = {k: v for k, v in fields.items() if v is not None}
+    return given or None
 
 
-def api_call(args, method: str, path: str, body: dict, token: str | None = None) -> dict:
+def api_call(args, method: str, path: str, body: dict | None = None, token: str | None = None) -> dict:
     headers = {"Content-Type": "application/json"}
     if token:
         headers["X-Device-Token"] = token
-    req = urllib.request.Request(args.api_url.rstrip("/") + path, data=json.dumps(body).encode(),
-                                 headers=headers, method=method)
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(args.api_url.rstrip("/") + path, data=data, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=120) as r:   # free-tier hosts can take a while to wake
         return json.load(r)
 
@@ -238,8 +242,9 @@ def enroll(args, cfg_path: Path) -> dict:
                 say("Updating your finder details")
                 try:
                     api_call(args, "PUT", "/nodes/me/profile", profile, token=old["device_token"])
-                except urllib.error.HTTPError as e:
-                    fail(f"could not update finder details ({e.code}): {e.read().decode(errors='replace')[:300]}")
+                except (urllib.error.HTTPError, urllib.error.URLError) as e:
+                    # Not worth failing an upgrade over; the node works without it.
+                    say(f"WARNING: could not update finder details ({e}); everything else continues")
             return {k: old[k] for k in ("device_id", "device_name", "device_token")}
 
     token = args.enroll_token
@@ -504,9 +509,22 @@ def gui(args) -> None:
 
     # Optional finder details. Empty and unticked by default: nothing is shared
     # unless the volunteer chooses to.
-    who = {k: tk.StringVar(value=getattr(args, k) or "") for k in ("display_name", "credit_name", "email")}
-    public = tk.BooleanVar(value=bool(args.public))
-    credit = tk.BooleanVar(value=bool(args.credit))
+    # On an upgrade, start from the volunteer's current choices so the
+    # always-sent checkboxes never withdraw consent by accident.
+    current: dict = {}
+    cfg_path = args.data_dir / "config" / "config.json"
+    if not args.uninstall and cfg_path.is_file():
+        try:
+            cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+            if cfg.get("api_url") == args.api_url:
+                current = api_call(args, "GET", "/nodes/me/profile", token=cfg["device_token"])
+        except Exception:
+            pass   # unreadable config or offline: fall back to empty fields
+    who = {k: tk.StringVar(value=getattr(args, k) or current.get(k) or "")
+           for k in ("display_name", "credit_name", "email")}
+    public = tk.BooleanVar(value=args.public if args.public is not None else bool(current.get("show_publicly")))
+    credit = tk.BooleanVar(value=args.credit if args.credit is not None
+                           else bool(current.get("credit_in_submissions")))
     if not args.uninstall:
         about = tk.LabelFrame(root, text=" About you (optional) ", fg=accent, bg=bg, font=("Segoe UI", 9),
                               padx=10, pady=6)
@@ -560,12 +578,12 @@ def gui(args) -> None:
             lines.put("ERROR: Lumina Setup needs administrator rights. Right-click it and choose Run as administrator.")
             return
         args.enroll_token, args.threads = token.get().strip(), max(1, int(threads.get()))
-        values = {k: v.get().strip() for k, v in who.items()}
-        if any(values.values()) or public.get() or credit.get():
-            for key, value in values.items():
-                setattr(args, key, value)
-            args.public, args.credit = public.get(), credit.get()
-        # else: nothing entered — leave any existing finder details unchanged on upgrade
+        # Typed fields are sent only if filled in (an empty box never wipes a
+        # stored name); the two consents are always sent, so unticking opts out.
+        for key, var in who.items():
+            if var.get().strip():
+                setattr(args, key, var.get().strip())
+        args.public, args.credit = public.get(), credit.get()
         go.state(["disabled"])
         threading.Thread(target=worker, daemon=True).start()
 

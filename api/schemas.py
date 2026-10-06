@@ -8,7 +8,7 @@ and ensures the same model is reused across routes rather than duplicated.
 from __future__ import annotations
 from datetime import datetime
 from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ── Heartbeat ──────────────────────────────────────────────────────────────────
@@ -45,7 +45,14 @@ class PopulateRequest(BaseModel):
 # ── Candidates ────────────────────────────────────────────────────────────────
 
 class CandidateSubmission(BaseModel):
-    """Posted by a worker after scoring a transit candidate."""
+    """Posted by a worker after scoring a transit candidate.
+
+    Untrusted input from volunteer machines: NaN/inf are rejected (one bad
+    value would make every public candidate listing fail to serialise), and
+    fits_url must point at MAST because it is shown to reviewers.
+    """
+    model_config = ConfigDict(allow_inf_nan=False)
+
     worker_hostname:  str
     tic_id:           str
     mission:          str
@@ -58,18 +65,17 @@ class CandidateSubmission(BaseModel):
     secondary_depth:  float = 0.0
     odd_even_diff:    float = 0.0
     # Ephemeris: with period + t0 + duration anyone can re-fold the public
-    # light curve and redraw the transit. t0 is mid-transit; t0_bjd is the
-    # same instant as a full BJD_TDB (mission clocks differ: BKJD / BTJD).
+    # light curve and redraw the transit. t0 is mid-transit in the mission's
+    # clock (BKJD / BTJD); the server stores the BJD_TDB equivalent.
     t0:               float | None = None
-    t0_bjd:           float | None = None
     # Vetting diagnostics
     n_transits:       float | None = None
-    depth_sigma:      float | None = None   # depth in units of per-point noise
+    snr:              float | None = None   # depth / robust out-of-transit noise * sqrt(n in transit)
     centroid_shift:   float | None = None
     # Provenance: exactly which data and which model produced this
-    fits_url:         str | None = Field(None, max_length=512)
-    model_sha256:     str | None = Field(None, max_length=64)
-    node_version:     str | None = Field(None, max_length=32)
+    fits_url:         str | None = Field(None, max_length=512,
+                                         pattern=r"^(mast:|https://mast\.stsci\.edu/)[^\s<>\"']*$")
+    model_sha256:     str | None = Field(None, max_length=64, pattern=r"^[0-9a-f]{64}$")
     # Phase-folded light curve arrays (stored as lists of floats)
     global_view:      list[float] = Field([], max_length=4096)
     local_view:       list[float] = Field([], max_length=512)
@@ -95,7 +101,7 @@ class CandidateResponse(BaseModel):
     t0:               float | None = None
     t0_bjd:           float | None = None
     n_transits:       float | None = None
-    depth_sigma:      float | None = None
+    snr:              float | None = None
     secondary_depth:  float | None = None
     odd_even_diff:    float | None = None
     centroid_shift:   float | None = None

@@ -99,7 +99,8 @@ class TransitCandidate:
     #   layers normalise them independently per channel.
     centroid_curve: np.ndarray   = field(default_factory=lambda: np.zeros(201,  dtype=np.float32))
     noise_floor: float = 0.001
-    depth_frac: float = 0.0       # physical fractional depth (depth x relative-flux std); for reporting
+    depth_frac: float = 0.0       # physical fractional depth on unclipped relative flux; for reporting
+    transit_snr: float = 0.0      # depth / robust out-of-transit noise * sqrt(in-transit points)
     # Raw (prenorm) local-scale views — NOT per-view z-scored, analogous to
     # raw_global_view.  Used as channel 1 of the 2-channel local branch inputs
     # so the model sees both the normalised transit shape and its original scale.
@@ -356,6 +357,28 @@ def _detrend_iterative(time: np.ndarray, flux: np.ndarray) -> np.ndarray:
 
     return (flux - trend_all) / trend_all
 
+
+
+def _physical_depth(
+    time: np.ndarray, rel: np.ndarray, period: float, t0: float, duration: float,
+) -> tuple[float, float]:
+    """(fractional depth, transit SNR) measured on detrended relative flux.
+
+    BLS runs on z-scored, +-5 sigma clipped flux, so its depth is neither
+    physical nor reliable for deep transits; this measures directly:
+    depth = out-of-transit median - in-transit mean, noise = 1.4826 * MAD of
+    out-of-transit points, SNR = depth / noise * sqrt(n in-transit points).
+    """
+    dt = ((time - t0 + 0.5 * period) % period) - 0.5 * period   # days from mid-transit
+    inside = np.abs(dt) < 0.5 * duration
+    outside = np.abs(dt) > duration          # skip ingress/egress margins
+    if inside.sum() < 3 or outside.sum() < 10:
+        return 0.0, 0.0
+    base = float(np.median(rel[outside]))
+    depth = base - float(np.mean(rel[inside]))
+    noise = 1.4826 * float(np.median(np.abs(rel[outside] - base)))
+    snr = depth / noise * float(np.sqrt(inside.sum())) if noise > 0 else 0.0
+    return depth, snr
 
 def _normalise(flux: np.ndarray) -> np.ndarray:
     # CS3: use float64 intermediates then cast back to float32 to avoid silent
@@ -1089,9 +1112,9 @@ def preprocess_multi(
     # Issue 4.3: use iterative detrending with transit masking as the
     # default; _detrend is kept as a fallback inside _detrend_iterative.
     flux = _detrend_iterative(time, flux)
-    # Relative-flux scale before z-scoring: BLS depths below are in units of
-    # this std, so depth * flux_scale is the physical fractional depth.
-    flux_scale = float(np.std(flux))
+    # Keep the detrended relative flux unclipped: physical depth and SNR are
+    # measured on it (the z-scored copy below is clipped at +-5 sigma).
+    rel_flux = flux.copy()
     flux = _normalise(flux)
 
     candidates = _bls_search(time, flux, n_candidates)
@@ -1111,6 +1134,7 @@ def preprocess_multi(
         secondary_view, raw_secondary_view         = _compute_secondary_view(phase, flux, duration, period)
         cshift                                     = _centroid_shift(time, centr1, centr2, period, t0, duration)
         n_tr                                       = _count_transits(time, period, t0, duration)
+        phys                                       = _physical_depth(time, rel_flux, period, t0, duration)
         centroid_curve                             = _compute_centroid_curve(time, centr1, centr2, period, t0)
 
         results.append(TransitCandidate(
@@ -1118,7 +1142,8 @@ def preprocess_multi(
             t0                 = t0,
             duration           = duration,
             depth              = c["depth"],
-            depth_frac         = c["depth"] * flux_scale,
+            depth_frac         = phys[0],
+            transit_snr        = phys[1],
             bls_power          = c["power"],
             global_view        = global_view,
             local_view         = local_view,
@@ -1187,9 +1212,9 @@ def preprocess(
     # Issue 4.3: use iterative detrending with transit masking as the
     # default; _detrend is kept as a fallback inside _detrend_iterative.
     flux = _detrend_iterative(time, flux)
-    # Relative-flux scale before z-scoring: BLS depths below are in units of
-    # this std, so depth * flux_scale is the physical fractional depth.
-    flux_scale = float(np.std(flux))
+    # Keep the detrended relative flux unclipped: physical depth and SNR are
+    # measured on it (the z-scored copy below is clipped at +-5 sigma).
+    rel_flux = flux.copy()
     flux = _normalise(flux)
 
     candidates = _bls_search(time, flux, n_candidates)
@@ -1209,6 +1234,7 @@ def preprocess(
         secondary_view, raw_secondary_view         = _compute_secondary_view(phase, flux, duration, period)
         cshift                                     = _centroid_shift(time, centr1, centr2, period, t0, duration)
         n_tr                                       = _count_transits(time, period, t0, duration)
+        phys                                       = _physical_depth(time, rel_flux, period, t0, duration)
         centroid_curve                             = _compute_centroid_curve(time, centr1, centr2, period, t0)
 
         results.append(TransitCandidate(
@@ -1216,7 +1242,8 @@ def preprocess(
             t0                 = t0,
             duration           = duration,
             depth              = c["depth"],
-            depth_frac         = c["depth"] * flux_scale,
+            depth_frac         = phys[0],
+            transit_snr        = phys[1],
             bls_power          = c["power"],
             global_view        = global_view,
             local_view         = local_view,

@@ -56,29 +56,44 @@ async def enroll(payload: EnrollRequest):
         "token_sha256": token_hash(token),
         "revoked":      False,
         "created_at":   datetime.now(timezone.utc),
-        "profile":      _clean(payload.profile),
+        "profile":      _clean(payload.profile.model_dump()),
     })
     return EnrollResponse(device_id=device_id, name=name, device_token=token)
 
 
-def _clean(profile: FinderProfile) -> dict:
+def _clean(p: dict) -> dict:
     """Strip control characters; a changed email must be verified again."""
-    p = profile.model_dump()
+    p = dict(p)
     for k in ("display_name", "credit_name", "email"):
-        p[k] = "".join(ch for ch in p[k] if ch.isprintable()).strip()
+        p[k] = "".join(ch for ch in p.get(k, "") if ch.isprintable()).strip()
     p["email_verified"] = False
     p["updated_at"] = datetime.now(timezone.utc)
     return p
 
 
-@router.put("/me/profile")
-async def update_profile(request: Request, profile: FinderProfile):
-    """Change this node's finder details (device token required)."""
+@router.get("/me/profile")
+async def get_profile(request: Request):
+    """This node's own finder details (device token required), so the
+    installer can show current choices before changing them."""
     device = getattr(request.state, "device", None)
     if device is None:
         raise HTTPException(status_code=401, detail="Device token required.")
-    new = _clean(profile)
-    old = device.get("profile") or {}
+    p = device.get("profile") or FinderProfile().model_dump()
+    return {k: p.get(k) for k in FinderProfile.model_fields} | {"email_verified": p.get("email_verified", False)}
+
+
+@router.put("/me/profile")
+async def update_profile(request: Request, profile: FinderProfile):
+    """Change this node's finder details (device token required).
+
+    Partial update: only fields present in the request change, so e.g.
+    {"show_publicly": false} opts out without wiping the stored name.
+    """
+    device = getattr(request.state, "device", None)
+    if device is None:
+        raise HTTPException(status_code=401, detail="Device token required.")
+    old = device.get("profile") or FinderProfile().model_dump()
+    new = _clean({**old, **profile.model_dump(exclude_unset=True)})
     if old.get("email") == new["email"]:
         new["email_verified"] = old.get("email_verified", False)
     await db.devices().update_one({"device_id": device["device_id"]}, {"$set": {"profile": new}})

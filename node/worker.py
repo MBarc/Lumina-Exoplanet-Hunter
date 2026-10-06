@@ -26,9 +26,6 @@ from pathlib import Path
 MAST_DOWNLOAD = "https://mast.stsci.edu/api/v0.1/Download/file"
 HEARTBEAT_SECONDS = 30
 IDLE_SECONDS = 60
-NODE_VERSION = "0.2.0"
-# Mission time systems are BJD_TDB minus a constant: Kepler/K2 BKJD, TESS BTJD.
-BJD_OFFSET = {"kepler": 2454833.0, "k2": 2454833.0, "tess": 2457000.0}
 
 
 class Api:
@@ -90,7 +87,6 @@ class Worker:
         scores = self.model.predict_batch(candidates) if candidates else []
 
         keep_views = self.cfg["report_threshold"]
-        offset = BJD_OFFSET.get(job["mission"].lower())
         for c, score in zip(candidates, scores):
             big = score >= keep_views   # light-curve arrays only for interesting ones
             view = lambda a: a.tolist() if big else []   # noqa: E731
@@ -99,14 +95,14 @@ class Worker:
                 "tic_id": job["tic_id"], "mission": job["mission"], "sector": job.get("sector"),
                 # Ephemeris: enough to re-fold the public light curve and redraw the transit.
                 "period_days": float(c.period), "duration_days": float(c.duration),
-                "t0": float(c.t0), "t0_bjd": float(c.t0) + offset if offset is not None else None,
+                "t0": float(c.t0),   # mission clock; the server derives BJD
                 "depth_ppm": float(c.depth_frac) * 1e6, "bls_power": float(c.bls_power),
                 "exonet_score": float(score),
                 "n_transits": float(c.n_transits),
-                "depth_sigma": float(c.depth),   # depth in units of per-point noise
+                "snr": float(c.transit_snr),
                 "secondary_depth": float(c.secondary_depth), "odd_even_diff": float(c.odd_even_diff),
                 "centroid_shift": float(c.centroid_shift),
-                "fits_url": job["fits_url"], "model_sha256": self.model_sha256, "node_version": NODE_VERSION,
+                "fits_url": job["fits_url"], "model_sha256": self.model_sha256,
                 "global_view": view(c.global_view), "local_view": view(c.local_view),
                 "odd_view": view(c.odd_view), "even_view": view(c.even_view),
                 "secondary_view": view(c.secondary_view),

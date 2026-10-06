@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from api import database
@@ -60,10 +61,10 @@ app.add_middleware(
 
 # Routes open to everyone regardless of method
 _PUBLIC_PREFIXES = ("/health", "/docs", "/openapi", "/stats", "/stars", "/nodes",
-                    "/queue/status", "/admin/scheduler/log")
+                    "/queue/status")
 
 # GET-only public routes — read access is open, writes still require a key
-_PUBLIC_GET_PREFIXES = ("/candidates",)
+_PUBLIC_GET_PREFIXES = ("/candidates", "/admin/scheduler/log")   # POSTing scheduler logs needs the key
 
 # Routes a volunteer node may call with its own X-Device-Token. Everything else
 # that isn't public (queue populate, admin) needs the operator's X-API-Key.
@@ -73,8 +74,17 @@ _DEVICE_ROUTES = {
     ("POST", "/candidates"),
     ("POST", "/candidates/processed"),
     ("POST", "/telemetry/heartbeat"),
+    ("GET",  "/nodes/me/profile"),
     ("PUT",  "/nodes/me/profile"),
 }
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # FastAPI's default echoes the rejected input back; a NaN/inf there can't be
+    # JSON-encoded, turning a clean 422 into a 500. Report location and reason only.
+    return JSONResponse(status_code=422, content={"detail": [
+        {"loc": e.get("loc"), "msg": e.get("msg"), "type": e.get("type")} for e in exc.errors()]})
 
 
 def _unauthorized(detail: str) -> JSONResponse:

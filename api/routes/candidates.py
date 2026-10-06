@@ -20,6 +20,10 @@ from api.schemas import CandidateSubmission, CandidateResponse, ProcessedSubmiss
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 
+# Mission clocks are BJD_TDB minus a constant: Kepler/K2 BKJD, TESS BTJD.
+_BJD_OFFSET = {"kepler": 2454833.0, "k2": 2454833.0, "tess": 2457000.0}
+VIEW_FIELDS = ("global_view", "local_view", "odd_view", "even_view", "secondary_view")
+
 
 def _serialize(doc: dict) -> dict:
     """Convert MongoDB document to JSON-serialisable dict."""
@@ -46,6 +50,8 @@ async def submit_candidate(request: Request, payload: CandidateSubmission):
     doc["worker_hostname"] = node_name(request, payload.worker_hostname)
     doc["reported_at"] = now
     doc["verified"] = False
+    offset = _BJD_OFFSET.get(payload.mission.lower())
+    doc["t0_bjd"] = payload.t0 + offset if payload.t0 is not None and offset is not None else None
 
     result = await db.candidates().insert_one(doc)
 
@@ -81,7 +87,7 @@ async def list_candidates(
     cursor = db.candidates().find(
         query,
         # Exclude large arrays by default — use the /{id} endpoint for those
-        projection={v: 0 for v in ("global_view", "local_view", "odd_view", "even_view", "secondary_view")},
+        projection={v: 0 for v in VIEW_FIELDS},
     ).sort("reported_at", -1).limit(limit)
 
     docs = await cursor.to_list(length=limit)
