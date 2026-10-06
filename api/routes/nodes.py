@@ -13,11 +13,11 @@ import hmac
 import secrets
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from api import database as db
 from api.config import get_settings
-from api.schemas import EnrollRequest, EnrollResponse, NodeInfo
+from api.schemas import EnrollRequest, EnrollResponse, FinderProfile, NodeInfo
 
 router = APIRouter(prefix="/nodes", tags=["nodes"])
 
@@ -45,7 +45,9 @@ async def enroll(payload: EnrollRequest):
 
     device_id = secrets.token_hex(8)
     token     = secrets.token_urlsafe(32)
-    name      = f"{payload.hostname}-{device_id[:6]}"
+    # Public identity carries no hostname (hostnames often contain real names);
+    # the hostname is kept private for operators only.
+    name      = f"node-{device_id[:6]}"
     await db.devices().insert_one({
         "device_id":    device_id,
         "name":         name,
@@ -54,8 +56,43 @@ async def enroll(payload: EnrollRequest):
         "token_sha256": token_hash(token),
         "revoked":      False,
         "created_at":   datetime.now(timezone.utc),
+        "profile":      _clean(payload.profile),
     })
     return EnrollResponse(device_id=device_id, name=name, device_token=token)
+
+
+def _clean(profile: FinderProfile) -> dict:
+    """Strip control characters; a changed email must be verified again."""
+    p = profile.model_dump()
+    for k in ("display_name", "credit_name", "email"):
+        p[k] = "".join(ch for ch in p[k] if ch.isprintable()).strip()
+    p["email_verified"] = False
+    p["updated_at"] = datetime.now(timezone.utc)
+    return p
+
+
+@router.put("/me/profile")
+async def update_profile(request: Request, profile: FinderProfile):
+    """Change this node's finder details (device token required)."""
+    device = getattr(request.state, "device", None)
+    if device is None:
+        raise HTTPException(status_code=401, detail="Device token required.")
+    new = _clean(profile)
+    old = device.get("profile") or {}
+    if old.get("email") == new["email"]:
+        new["email_verified"] = old.get("email_verified", False)
+    await db.devices().update_one({"device_id": device["device_id"]}, {"$set": {"profile": new}})
+    return {"status": "ok"}
+
+
+async def finder_names(node_names: set[str]) -> dict[str, str]:
+    """node name -> public display name, only for finders who opted in."""
+    out: dict[str, str] = {}
+    async for d in db.devices().find({"name": {"$in": list(node_names)},
+                                      "profile.show_publicly": True},
+                                     {"name": 1, "profile.display_name": 1}):
+        out[d["name"]] = d["profile"].get("display_name") or d["name"]
+    return out
 
 # A node is considered "active" if its last heartbeat is within this window.
 _ACTIVE_WINDOW_MINUTES = 5

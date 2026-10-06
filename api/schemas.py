@@ -57,14 +57,31 @@ class CandidateSubmission(BaseModel):
     exonet_score:     float = Field(ge=0.0, le=1.0)
     secondary_depth:  float = 0.0
     odd_even_diff:    float = 0.0
+    # Ephemeris: with period + t0 + duration anyone can re-fold the public
+    # light curve and redraw the transit. t0 is mid-transit; t0_bjd is the
+    # same instant as a full BJD_TDB (mission clocks differ: BKJD / BTJD).
+    t0:               float | None = None
+    t0_bjd:           float | None = None
+    # Vetting diagnostics
+    n_transits:       float | None = None
+    depth_sigma:      float | None = None   # depth in units of per-point noise
+    centroid_shift:   float | None = None
+    # Provenance: exactly which data and which model produced this
+    fits_url:         str | None = Field(None, max_length=512)
+    model_sha256:     str | None = Field(None, max_length=64)
+    node_version:     str | None = Field(None, max_length=32)
     # Phase-folded light curve arrays (stored as lists of floats)
-    global_view:      list[float] = []
-    local_view:       list[float] = []
+    global_view:      list[float] = Field([], max_length=4096)
+    local_view:       list[float] = Field([], max_length=512)
+    odd_view:         list[float] = Field([], max_length=512)
+    even_view:        list[float] = Field([], max_length=512)
+    secondary_view:   list[float] = Field([], max_length=512)
 
 class CandidateResponse(BaseModel):
     """Candidate as returned to the dashboard / public site."""
     id:               str
     worker_hostname:  str
+    finder:           str | None = None   # display name, only if the finder opted in
     tic_id:           str
     mission:          str
     sector:           int | None
@@ -74,8 +91,21 @@ class CandidateResponse(BaseModel):
     bls_power:        float
     exonet_score:     float
     reported_at:      datetime
+    verified:         bool = False
+    t0:               float | None = None
+    t0_bjd:           float | None = None
+    n_transits:       float | None = None
+    depth_sigma:      float | None = None
+    secondary_depth:  float | None = None
+    odd_even_diff:    float | None = None
+    centroid_shift:   float | None = None
+    fits_url:         str | None = None
+    model_sha256:     str | None = None
     global_view:      list[float] = []
     local_view:       list[float] = []
+    odd_view:         list[float] = []
+    even_view:        list[float] = []
+    secondary_view:   list[float] = []
 
 
 # ── Processed log ─────────────────────────────────────────────────────────────
@@ -114,11 +144,26 @@ class ActivityPoint(BaseModel):
 
 # ── Device enrollment ─────────────────────────────────────────────────────────
 
+class FinderProfile(BaseModel):
+    """Optional, opt-in details about the volunteer behind a node.
+
+    Nothing here is public unless show_publicly is true, and the email is
+    never public. credit_in_submissions is a separate consent: the credit
+    name may be put on a community candidate submission (ExoFOP CTOI / paper
+    acknowledgement) — only after the email has been verified.
+    """
+    display_name:           str = Field("", max_length=40)
+    credit_name:            str = Field("", max_length=80)
+    email:                  str = Field("", max_length=254, pattern=r"^$|^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    show_publicly:          bool = False
+    credit_in_submissions:  bool = False
+
 class EnrollRequest(BaseModel):
     """Sent once by the installer to join the network."""
     hostname:      str = Field(min_length=1, max_length=64)
     platform:      str = Field("", max_length=32)
     enroll_token:  str = ""
+    profile:       FinderProfile = FinderProfile()
 
 class EnrollResponse(BaseModel):
     device_id:     str

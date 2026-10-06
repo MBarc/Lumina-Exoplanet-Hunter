@@ -73,6 +73,7 @@ _DEVICE_ROUTES = {
     ("POST", "/candidates"),
     ("POST", "/candidates/processed"),
     ("POST", "/telemetry/heartbeat"),
+    ("PUT",  "/nodes/me/profile"),
 }
 
 
@@ -95,18 +96,20 @@ async def require_api_key(request: Request, call_next):
     """
     path = request.url.path
     request.state.device = None
-    if any(path.startswith(p) for p in _PUBLIC_PREFIXES):
-        return await call_next(request)
-
-    if request.method == "GET" and any(path.startswith(p) for p in _PUBLIC_GET_PREFIXES):
-        return await call_next(request)
-
+    # Device routes first: some live under public prefixes (/nodes/me/...),
+    # and must still see who is calling.
     token = request.headers.get("X-Device-Token")
     if token and (request.method, path) in _DEVICE_ROUTES:
         device = await database.devices().find_one({"token_sha256": token_hash(token), "revoked": False})
         if device is None:
             return _unauthorized("Invalid or revoked device token.")
         request.state.device = device
+        return await call_next(request)
+
+    if any(path.startswith(p) for p in _PUBLIC_PREFIXES):
+        return await call_next(request)
+
+    if request.method == "GET" and any(path.startswith(p) for p in _PUBLIC_GET_PREFIXES):
         return await call_next(request)
 
     if not hmac.compare_digest(request.headers.get("X-API-Key", ""), get_settings().api_key):

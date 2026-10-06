@@ -129,6 +129,14 @@ def parse_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--no-service", action="store_true", help="install files and enroll, but register no service")
     ap.add_argument("--no-start", action="store_true", help="register the service but don't start it now")
     ap.add_argument("--no-shortcuts", action="store_true", help="skip Start Menu / desktop entries")
+    who = ap.add_argument_group("finder details (all optional; nothing is public unless you say so)")
+    who.add_argument("--display-name", default=None, help="name shown on Mission Control if --public")
+    who.add_argument("--credit-name", default=None,
+                     help="name to credit if a candidate you find is submitted for review (with --credit)")
+    who.add_argument("--email", default=None, help="for news about your candidates; never shown publicly")
+    who.add_argument("--public", action="store_true", default=None, help="show --display-name on Mission Control")
+    who.add_argument("--credit", action="store_true", default=None,
+                     help="allow --credit-name on candidate submissions (needs a verified email)")
     ap.add_argument("--uninstall", action="store_true", help="remove the service and program files")
     ap.add_argument("--purge", action="store_true", help="with --uninstall, also delete data, config and logs")
     args = ap.parse_args(argv)
@@ -200,23 +208,48 @@ def build_runtime(args) -> Path:
     return py
 
 
+def profile_from_args(args) -> dict | None:
+    """Finder details given on the command line / installer window, or None if none were."""
+    fields = {"display_name": args.display_name, "credit_name": args.credit_name, "email": args.email,
+              "show_publicly": args.public, "credit_in_submissions": args.credit}
+    if all(v is None for v in fields.values()):
+        return None
+    return {k: (v if v is not None else (False if k in ("show_publicly", "credit_in_submissions") else ""))
+            for k, v in fields.items()}
+
+
+def api_call(args, method: str, path: str, body: dict, token: str | None = None) -> dict:
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["X-Device-Token"] = token
+    req = urllib.request.Request(args.api_url.rstrip("/") + path, data=json.dumps(body).encode(),
+                                 headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=120) as r:   # free-tier hosts can take a while to wake
+        return json.load(r)
+
+
 def enroll(args, cfg_path: Path) -> dict:
+    profile = profile_from_args(args)
     if cfg_path.is_file() and not args.re_enroll:
         old = json.loads(cfg_path.read_text(encoding="utf-8"))
         if old.get("device_token") and old.get("api_url") == args.api_url:
             say(f"Already enrolled as {old.get('device_name')}; keeping it")
+            if profile is not None:
+                say("Updating your finder details")
+                try:
+                    api_call(args, "PUT", "/nodes/me/profile", profile, token=old["device_token"])
+                except urllib.error.HTTPError as e:
+                    fail(f"could not update finder details ({e.code}): {e.read().decode(errors='replace')[:300]}")
             return {k: old[k] for k in ("device_id", "device_name", "device_token")}
 
     token = args.enroll_token
     while True:
         say(f"Enrolling with {args.api_url}")
-        body = json.dumps({"hostname": socket.gethostname()[:64], "platform": platform.system(),
-                           "enroll_token": token}).encode()
-        req = urllib.request.Request(args.api_url.rstrip("/") + "/nodes/enroll", data=body,
-                                     headers={"Content-Type": "application/json"}, method="POST")
+        body = {"hostname": socket.gethostname()[:64], "platform": platform.system(), "enroll_token": token}
+        if profile is not None:
+            body["profile"] = profile
         try:
-            with urllib.request.urlopen(req, timeout=120) as r:   # free-tier hosts can take a while to wake
-                got = json.load(r)
+            got = api_call(args, "POST", "/nodes/enroll", body)
             return {"device_id": got["device_id"], "device_name": got["name"], "device_token": got["device_token"]}
         except urllib.error.HTTPError as e:
             if e.code == 403 and not QUIET and not GUI_SINK and sys.stdin:
@@ -469,11 +502,32 @@ def gui(args) -> None:
                  font=("Segoe UI", 9)).grid(row=2, column=0, sticky="w")
         ttk.Spinbox(form, from_=1, to=os.cpu_count() or 1, textvariable=threads, width=6).grid(row=3, column=0, sticky="w")
 
-    log = tk.Text(root, height=9, width=78, bg="#0d1f3c", fg=fg, relief="flat", font=("Consolas", 9),
+    # Optional finder details. Empty and unticked by default: nothing is shared
+    # unless the volunteer chooses to.
+    who = {k: tk.StringVar(value=getattr(args, k) or "") for k in ("display_name", "credit_name", "email")}
+    public = tk.BooleanVar(value=bool(args.public))
+    credit = tk.BooleanVar(value=bool(args.credit))
+    if not args.uninstall:
+        about = tk.LabelFrame(root, text=" About you (optional) ", fg=accent, bg=bg, font=("Segoe UI", 9),
+                              padx=10, pady=6)
+        about.grid(row=3, column=0, columnspan=2, sticky="we", pady=(14, 0))
+        for r, (key, label) in enumerate((("display_name", "Display name"),
+                                          ("credit_name", "Name to credit on a discovery"),
+                                          ("email", "Email (never shown; for news about your finds)"))):
+            tk.Label(about, text=label, fg=fg, bg=bg, font=("Segoe UI", 9)).grid(row=r, column=0, sticky="w", padx=(0, 10))
+            ttk.Entry(about, textvariable=who[key], width=40).grid(row=r, column=1, sticky="w", pady=2)
+        tk.Checkbutton(about, text="Show my display name on Mission Control", variable=public, fg=fg, bg=bg,
+                       selectcolor="#0d1f3c", activebackground=bg, activeforeground=fg).grid(
+            row=3, column=0, columnspan=2, sticky="w")
+        tk.Checkbutton(about, text="Credit my name if a candidate I find is submitted for review",
+                       variable=credit, fg=fg, bg=bg, selectcolor="#0d1f3c", activebackground=bg,
+                       activeforeground=fg).grid(row=4, column=0, columnspan=2, sticky="w")
+
+    log = tk.Text(root, height=8, width=78, bg="#0d1f3c", fg=fg, relief="flat", font=("Consolas", 9),
                   state="disabled", padx=8, pady=6)
-    log.grid(row=3, column=0, columnspan=2, pady=(18, 12))
+    log.grid(row=4, column=0, columnspan=2, pady=(14, 12))
     buttons = tk.Frame(root, bg=bg)
-    buttons.grid(row=4, column=0, columnspan=2, sticky="e")
+    buttons.grid(row=5, column=0, columnspan=2, sticky="e")
     go = ttk.Button(buttons, text=verb)
     close = ttk.Button(buttons, text="Cancel", command=root.destroy)
     go.pack(side="left", padx=6)
@@ -506,6 +560,12 @@ def gui(args) -> None:
             lines.put("ERROR: Lumina Setup needs administrator rights. Right-click it and choose Run as administrator.")
             return
         args.enroll_token, args.threads = token.get().strip(), max(1, int(threads.get()))
+        values = {k: v.get().strip() for k, v in who.items()}
+        if any(values.values()) or public.get() or credit.get():
+            for key, value in values.items():
+                setattr(args, key, value)
+            args.public, args.credit = public.get(), credit.get()
+        # else: nothing entered — leave any existing finder details unchanged on upgrade
         go.state(["disabled"])
         threading.Thread(target=worker, daemon=True).start()
 

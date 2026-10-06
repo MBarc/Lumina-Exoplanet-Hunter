@@ -15,7 +15,7 @@ from bson import ObjectId
 from fastapi import APIRouter, Query, HTTPException, Request
 
 from api import database as db
-from api.routes.nodes import node_name
+from api.routes.nodes import finder_names, node_name
 from api.schemas import CandidateSubmission, CandidateResponse, ProcessedSubmission
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
@@ -81,11 +81,12 @@ async def list_candidates(
     cursor = db.candidates().find(
         query,
         # Exclude large arrays by default — use the /{id} endpoint for those
-        projection={"global_view": 0, "local_view": 0},
+        projection={v: 0 for v in ("global_view", "local_view", "odd_view", "even_view", "secondary_view")},
     ).sort("reported_at", -1).limit(limit)
 
     docs = await cursor.to_list(length=limit)
-    return [_serialize(d) for d in docs]
+    names = await finder_names({d["worker_hostname"] for d in docs})
+    return [_serialize(d) | {"finder": names.get(d["worker_hostname"])} for d in docs]
 
 
 @router.get("/history")
@@ -124,7 +125,8 @@ async def get_candidate(candidate_id: str):
     if doc is None:
         raise HTTPException(status_code=404, detail="Candidate not found.")
 
-    return _serialize(doc)
+    names = await finder_names({doc["worker_hostname"]})
+    return _serialize(doc) | {"finder": names.get(doc["worker_hostname"])}
 
 
 @router.post("/processed", status_code=201)

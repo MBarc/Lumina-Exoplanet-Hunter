@@ -11,6 +11,7 @@ Run:  python -m node.worker --config <path to config.json>
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import logging.handlers
@@ -25,6 +26,9 @@ from pathlib import Path
 MAST_DOWNLOAD = "https://mast.stsci.edu/api/v0.1/Download/file"
 HEARTBEAT_SECONDS = 30
 IDLE_SECONDS = 60
+NODE_VERSION = "0.2.0"
+# Mission time systems are BJD_TDB minus a constant: Kepler/K2 BKJD, TESS BTJD.
+BJD_OFFSET = {"kepler": 2454833.0, "k2": 2454833.0, "tess": 2457000.0}
 
 
 class Api:
@@ -56,6 +60,7 @@ class Worker:
         self.mast = requests.Session()   # separate: never send the device token to MAST
         self.host = socket.gethostname()
         self.model = ExoNetInference(cfg["model_path"])
+        self.model_sha256 = hashlib.sha256(Path(cfg["model_path"]).read_bytes()).hexdigest()
         self.tmp = Path(cfg["data_dir"]) / "tmp"
         self.tmp.mkdir(parents=True, exist_ok=True)
         self.started = time.monotonic()
@@ -85,17 +90,26 @@ class Worker:
         scores = self.model.predict_batch(candidates) if candidates else []
 
         keep_views = self.cfg["report_threshold"]
+        offset = BJD_OFFSET.get(job["mission"].lower())
         for c, score in zip(candidates, scores):
             big = score >= keep_views   # light-curve arrays only for interesting ones
+            view = lambda a: a.tolist() if big else []   # noqa: E731
             self.api.post("/candidates", {
                 "worker_hostname": self.host,
                 "tic_id": job["tic_id"], "mission": job["mission"], "sector": job.get("sector"),
+                # Ephemeris: enough to re-fold the public light curve and redraw the transit.
                 "period_days": float(c.period), "duration_days": float(c.duration),
-                "depth_ppm": float(c.depth) * 1e6, "bls_power": float(c.bls_power),
+                "t0": float(c.t0), "t0_bjd": float(c.t0) + offset if offset is not None else None,
+                "depth_ppm": float(c.depth_frac) * 1e6, "bls_power": float(c.bls_power),
                 "exonet_score": float(score),
+                "n_transits": float(c.n_transits),
+                "depth_sigma": float(c.depth),   # depth in units of per-point noise
                 "secondary_depth": float(c.secondary_depth), "odd_even_diff": float(c.odd_even_diff),
-                "global_view": c.global_view.tolist() if big else [],
-                "local_view": c.local_view.tolist() if big else [],
+                "centroid_shift": float(c.centroid_shift),
+                "fits_url": job["fits_url"], "model_sha256": self.model_sha256, "node_version": NODE_VERSION,
+                "global_view": view(c.global_view), "local_view": view(c.local_view),
+                "odd_view": view(c.odd_view), "even_view": view(c.even_view),
+                "secondary_view": view(c.secondary_view),
             })
         self.api.post("/candidates/processed", {
             "worker_hostname": self.host,
