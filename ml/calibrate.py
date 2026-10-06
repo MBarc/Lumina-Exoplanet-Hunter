@@ -50,7 +50,6 @@ import torch
 import torch.nn as nn
 from scipy.optimize import minimize_scalar
 
-from sklearn.model_selection import train_test_split
 
 from ml.model import ExoNet
 
@@ -317,21 +316,20 @@ def calibrate_folds(
     labels: np.ndarray,
     device: torch.device,
     output_dir: Path,
-    test_size: float = 0.10,
-    seed: int = 42,
+    manifest_path: Path,
 ) -> dict:
     """
-    Calibrate all ExoNet fold checkpoints via temperature scaling.
+    Calibrate all ExoNet fold checkpoints via temperature scaling, using only
+    data each model never trained on.
 
-    For each fold checkpoint the function:
-    1. Loads the model.
-    2. Collects raw logits on the supplied validation data.
-    3. Optimises a per-fold temperature T_k by minimising NLL.
+    The split comes from train.py's ``split_manifest.npz``. For each fold k:
+    1. Loads fold k's model.
+    2. Collects raw logits on fold k's validation stars only (out-of-fold).
+    3. Optimises a per-fold temperature T_k by minimising NLL on them.
 
-    A global temperature is then found by pooling all fold logits.
-
-    ECE is computed once before calibration (using T=1 for all folds) and
-    once after (using the per-fold temperatures), and both are reported.
+    A global temperature is fit on the pooled out-of-fold logits. ECE is
+    reported on the pooled out-of-fold predictions before (T=1) and after
+    (per-fold T). The held-out test set is never touched.
 
     The results are saved to ``output_dir/calibration.json``.
 
@@ -361,117 +359,55 @@ def calibrate_folds(
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    manifest = np.load(manifest_path)
 
-    # X-2: exclude held-out test set from calibration — replicate the same
-    # train/test split used in train.py so calibration only uses train+val samples.
-    # IMPORTANT: train.py computes test_size as max(int(0.10*N), 10) — an integer —
-    # so we must do the same; using a float fraction produces a different split on
-    # datasets where int(frac*N) != round(frac*N).
-    all_indices = np.arange(len(labels))
-    n_test = max(int(test_size * len(labels)), 10)
-    train_idx, _ = train_test_split(
-        all_indices,
-        test_size=n_test,
-        random_state=seed,
-        # IMPORTANT: this 0.5 must match _POSITIVE_LABEL_THRESHOLD in train.py.
-        stratify=(labels >= 0.5).astype(int),
-    )
-    global_views     = global_views[train_idx]
-    local_views      = local_views[train_idx]
-    odd_views        = odd_views[train_idx]
-    even_views       = even_views[train_idx]
-    secondary_views  = secondary_views[train_idx]
-    centroid_views   = centroid_views[train_idx]
-    scalars          = scalars[train_idx]
-    labels           = labels[train_idx]
-
-    label_tensor = torch.from_numpy(labels.astype(np.float32))
-
-    fold_logits: list[torch.Tensor] = []
-    fold_keys: list[str] = []   # parallel to fold_logits; tracks 1-based fold number string
-    # Store temperatures keyed by 1-based fold number so missing folds do not
-    # shift indices and cause wrong temperatures to be applied to later folds.
+    # Temperatures keyed by 1-based fold number so missing folds don't shift
+    # later folds onto the wrong temperature.
     fold_temperatures: dict[str, float] = {}
-    # M9: track which folds were successfully loaded vs skipped.
-    valid_fold_mask: list[bool] = []
+    oof_logits: list[torch.Tensor] = []     # each fold's model on its own val stars
+    oof_scaled: list[torch.Tensor] = []
+    oof_labels: list[np.ndarray] = []
 
-    for k, ckpt_path in enumerate(fold_checkpoint_paths):
+    for k, ckpt_path in enumerate(fold_checkpoint_paths, start=1):
         ckpt_path = Path(ckpt_path)
-        fold_num  = k + 1
-        fold_key  = str(fold_num)
-
-        if not ckpt_path.exists():
-            print(
-                f"[calibrate] Fold {fold_num}: checkpoint not found at "
-                f"{ckpt_path} — skipping.",
-                flush=True,
-            )
-            # M9: store a placeholder so list lengths stay consistent, but mark as invalid.
-            fold_logits.append(torch.zeros(len(labels)))
-            fold_keys.append(fold_key)
-            valid_fold_mask.append(False)
+        key = f"fold{k}_val_idx"
+        if not ckpt_path.exists() or key not in manifest.files:
+            print(f"[calibrate] Fold {k}: no checkpoint or no {key} in manifest — skipping.", flush=True)
             continue
 
-        print(f"[calibrate] Fold {fold_num}: loading {ckpt_path.name} ...", flush=True)
-        model  = _load_checkpoint(ckpt_path, device)
+        idx = np.sort(manifest[key])        # sorted: cheap reads from memory-mapped caches
+        y = np.asarray(labels[idx])
+        print(f"[calibrate] Fold {k}: {ckpt_path.name} on {len(idx)} out-of-fold samples ...", flush=True)
+        model = _load_checkpoint(ckpt_path, device)
         logits = _collect_logits(
-            model, global_views, local_views, odd_views, even_views,
-            secondary_views, centroid_views, scalars, device,
+            model, global_views[idx], local_views[idx], odd_views[idx], even_views[idx],
+            secondary_views[idx], centroid_views[idx], scalars[idx], device,
         )
-        fold_logits.append(logits)
-        fold_keys.append(fold_key)
-        valid_fold_mask.append(True)
-
-        # Release GPU memory immediately.
         del model
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
-        T = _find_best_temperature(logits, label_tensor)
-        fold_temperatures[fold_key] = T
-        print(f"[calibrate] Fold {fold_num}: optimal T = {T:.4f}", flush=True)
+        T = _find_best_temperature(logits, torch.from_numpy(y.astype(np.float32)))
+        fold_temperatures[str(k)] = T
+        print(f"[calibrate] Fold {k}: optimal T = {T:.4f}", flush=True)
+        oof_logits.append(logits)
+        oof_scaled.append(logits / T)
+        oof_labels.append(y)
 
-    # ── ECE before calibration (T = 1 for every fold) ─────────────────────────
-    # M9: exclude skipped folds from ECE computation — their zero logits (0.5 prob)
-    # would pollute the calibration metrics.
-    valid_logits = [lg for lg, v in zip(fold_logits, valid_fold_mask) if v]
-    if not valid_logits:
+    if not oof_logits:
         print("[calibrate] WARNING: no valid fold checkpoints found — returning defaults.", flush=True)
         return {"global_temperature": 1.0, "fold_temperatures": fold_temperatures,
                 "ece_before": float("nan"), "ece_after": float("nan")}
 
-    stacked_probs_before = torch.stack(
-        [torch.sigmoid(lg) for lg in valid_logits], dim=0
-    ).mean(dim=0).numpy()   # (N,)
+    labels = np.concatenate(oof_labels)
+    all_logits = torch.cat(oof_logits)
+    stacked_probs_before = torch.sigmoid(all_logits).numpy()
+    stacked_probs_after  = torch.sigmoid(torch.cat(oof_scaled)).numpy()
+    ece_before = _expected_calibration_error(stacked_probs_before, labels, n_bins=_ECE_BINS)
+    ece_after  = _expected_calibration_error(stacked_probs_after,  labels, n_bins=_ECE_BINS)
+    print(f"[calibrate] Out-of-fold ECE before: {ece_before:.4f}  after: {ece_after:.4f}", flush=True)
 
-    ece_before = _expected_calibration_error(
-        stacked_probs_before, labels, n_bins=_ECE_BINS
-    )
-    print(f"[calibrate] ECE before calibration: {ece_before:.4f}", flush=True)
-
-    # ── ECE after per-fold calibration ────────────────────────────────────────
-    # M9: only use valid folds for after-calibration ECE.
-    # Use fold_keys to look up each fold's temperature from the dict — missing folds
-    # have no entry in fold_temperatures and are excluded via valid_fold_mask.
-    valid_pairs = [
-        (lg, fold_temperatures[fk])
-        for lg, fk, v in zip(fold_logits, fold_keys, valid_fold_mask) if v
-    ]
-    stacked_probs_after = torch.stack(
-        [torch.sigmoid(lg / T) for lg, T in valid_pairs],
-        dim=0,
-    ).mean(dim=0).numpy()   # (N,)
-
-    ece_after = _expected_calibration_error(
-        stacked_probs_after, labels, n_bins=_ECE_BINS
-    )
-    print(f"[calibrate] ECE after  calibration: {ece_after:.4f}", flush=True)
-
-    # ── Global temperature (pooled valid logits only) ─────────────────────────
-    # M9: exclude skipped folds' zero logits from global temperature estimation.
-    all_logits   = torch.cat(valid_logits)                              # (N * K_valid,)
-    all_labels   = label_tensor.repeat(len(valid_logits))               # (N * K_valid,)
-    global_T     = _find_best_temperature(all_logits, all_labels)
+    global_T = _find_best_temperature(all_logits, torch.from_numpy(labels.astype(np.float32)))
     print(f"[calibrate] Global temperature T = {global_T:.4f}", flush=True)
 
     # ── Persist results ───────────────────────────────────────────────────────
@@ -518,12 +454,8 @@ if __name__ == "__main__":
     p.add_argument("--output-dir", required=True, type=Path)
     p.add_argument("--device", default="cpu")
     p.add_argument("--folds", type=int, default=5)
-    p.add_argument("--test-size", type=float, default=0.10,
-               help="Test fraction held out (must match --test-size in training run; default 0.10). "
-                    "Mismatch will cause calibration to run on the wrong subset.")
-    p.add_argument("--seed", type=int, default=42,
-               help="Random seed for test split (must match --seed in training run; default 42). "
-                    "Mismatch will cause calibration to run on the wrong subset.")
+    p.add_argument("--manifest", type=Path, default=None,
+                   help="split_manifest.npz written by train.py (default: <output-dir>/split_manifest.npz)")
     args = p.parse_args()
     # load cache arrays and call calibrate_folds(...)
     data = np.load(args.cache_file, mmap_mode="r")
@@ -544,6 +476,5 @@ if __name__ == "__main__":
         labels=data["labels"],
         output_dir=args.output_dir,
         device=torch.device(args.device),
-        test_size=args.test_size,
-        seed=args.seed,
+        manifest_path=args.manifest or args.output_dir / "split_manifest.npz",
     )

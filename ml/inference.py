@@ -430,6 +430,11 @@ class EnsembleInference:
                     cal = json.load(fh)
                 self._global_temperature = float(cal.get("global_temperature", 1.0))
                 fold_temps = cal.get("fold_temperatures", [])
+                # calibrate.py writes {"1": T1, "2": T2, ...}; iterating that dict
+                # directly would yield the keys, i.e. temperature = fold number.
+                if isinstance(fold_temps, dict):
+                    n = max((int(k) for k in fold_temps), default=0)
+                    fold_temps = [fold_temps.get(str(i + 1), self._global_temperature) for i in range(n)]
                 if fold_temps:
                     self._fold_temperatures = [float(t) for t in fold_temps]
             except Exception as exc:
