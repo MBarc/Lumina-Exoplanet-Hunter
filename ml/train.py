@@ -2099,6 +2099,7 @@ def _run_epoch(
     mixup_alpha: float = 0.4,
     aux_loss_weight: float = 0.05,
     grad_accum_steps: int = 1,
+    simple_loss: bool = False,
 ) -> tuple[float, list[float], list[float], list[float]]:
     """
     Run one epoch (train or eval).
@@ -2128,6 +2129,13 @@ def _run_epoch(
     """
     is_train = optimizer is not None
     model.train(is_train)
+    # --simple-loss: classification (focal) loss only. Drops the auxiliary
+    # regression, gate entropy, Kendall uncertainty (log_var sits at its clamp,
+    # leaving a fixed ~1100x focal multiplier) and the physics penalty (built
+    # from detached scores, so it never had a gradient).
+    extras = is_train and not simple_loss
+    if simple_loss:
+        aux_loss_weight = 0.0
 
     total_loss = 0.0
     all_scores: list[float] = []
@@ -2191,7 +2199,7 @@ def _run_epoch(
             # Gate entropy regularisation: encourage the branch-gating network to
             # activate multiple branches (high entropy) rather than collapsing onto one.
             # We subtract entropy from the loss so the optimizer maximises it.
-            if is_train and hasattr(model, "fusion") and hasattr(model.fusion, "last_gate_weights"):
+            if extras and hasattr(model, "fusion") and hasattr(model.fusion, "last_gate_weights"):
                 gw = model.fusion.last_gate_weights  # (B, n_branches), already Softmax
                 gate_entropy = -(gw * torch.log(gw + 1e-8)).sum(dim=1).mean()
                 loss = loss - 0.01 * gate_entropy
@@ -2202,7 +2210,7 @@ def _run_epoch(
             # confidence: high uncertainty → large s → smaller gradient from
             # noisy labels, lower uncertainty → model is confident and focused.
             # Weight 1.0 (not additive) — replaces part of the focal loss gradient.
-            if is_train and hasattr(model, "fusion") and hasattr(model.fusion, "last_log_var"):
+            if extras and hasattr(model, "fusion") and hasattr(model.fusion, "last_log_var"):
                 log_var = model.fusion.last_log_var   # (B, 1)
                 # Recompute per-sample focal loss without reduction for Kendall weighting
                 bce_ps = nn.functional.binary_cross_entropy_with_logits(
@@ -2221,7 +2229,7 @@ def _run_epoch(
             # physics into the training signal rather than only as post-hoc filtering.
             # Penalty terms (each in [0,1]): duration/period > 10%, depth > 50%,
             # secondary depth > primary depth.  Penalty = mean(prob * violation).
-            if is_train:
+            if extras:
                 prob_det = torch.sigmoid(scores.detach()).squeeze(1)  # (B,)
                 # Veto 1: duty cycle (duration/period > 10%)
                 period_s   = scalar[:, 0].clamp(min=1e-4)
@@ -2582,7 +2590,8 @@ def _train_fold(
     for epoch in range(start_epoch, args.epochs + 1):
         train_loss, _, _, train_sample_losses = _run_epoch(model, train_loader, criterion, optimizer, device,
                                                             grad_accum_steps=args.grad_accum_steps,
-                                                            max_grad_norm=args.max_grad_norm)
+                                                            max_grad_norm=args.max_grad_norm,
+                                                            simple_loss=getattr(args, "simple_loss", False))
         val_loss, val_scores, val_labels_ep, _ = _run_epoch(model, val_loader, criterion, None, device)
 
         # Issue 3.1 / Fix 3: step the warmup scheduler AFTER the optimizer step
@@ -3318,6 +3327,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Number of parallel processes for BLS preprocessing. "
                              "Default 1 (sequential). Set to os.cpu_count()-1 for full parallelism.")
     parser.add_argument("--no-augment",    action="store_true")
+    parser.add_argument("--simple-loss",   action="store_true",
+                        help="Focal classification loss only (no aux/entropy/Kendall/physics terms).")
     parser.add_argument("--missions", default="kepler,tess,k2",
                         help="Comma-separated missions to build into the cache, e.g. 'tess' for a "
                              "TESS-only cache (merge caches with scripts/merge_caches.py).")
