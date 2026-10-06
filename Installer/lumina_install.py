@@ -169,7 +169,12 @@ def copy_program(args) -> None:
         shutil.copytree(SOURCE / pkg, app / pkg, ignore=ignore, dirs_exist_ok=True)
     if not (SOURCE / "exonet.onnx").is_file():
         fail(f"missing model {SOURCE / 'exonet.onnx'}")
-    shutil.copy2(SOURCE / "exonet.onnx", app / "exonet.onnx")
+    # Newer PyTorch exports keep the weights in exonet.onnx.data next to the graph.
+    for f in ("exonet.onnx", "exonet.onnx.data"):
+        if (SOURCE / f).is_file():
+            shutil.copy2(SOURCE / f, app / f)
+        else:
+            (app / f).unlink(missing_ok=True)   # don't leave a stale weights file from an older model
     for icon in ("lumina.ico", "lumina-256.png"):
         shutil.copy2(SOURCE / "branding" / icon, args.install_dir / icon)
     # Keep a copy of the installer so Uninstall works after the download is gone.

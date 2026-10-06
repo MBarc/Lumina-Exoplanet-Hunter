@@ -57,7 +57,13 @@ class Worker:
         self.mast = requests.Session()   # separate: never send the device token to MAST
         self.host = socket.gethostname()
         self.model = ExoNetInference(cfg["model_path"])
-        self.model_sha256 = hashlib.sha256(Path(cfg["model_path"]).read_bytes()).hexdigest()
+        # Fingerprint graph + external weights (newer exports split them), so
+        # different weights never look like the same model.
+        h = hashlib.sha256()
+        for f in (Path(cfg["model_path"]), Path(cfg["model_path"] + ".data")):
+            if f.is_file():
+                h.update(f.read_bytes())
+        self.model_sha256 = h.hexdigest()
         self.tmp = Path(cfg["data_dir"]) / "tmp"
         self.tmp.mkdir(parents=True, exist_ok=True)
         self.started = time.monotonic()

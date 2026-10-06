@@ -17,7 +17,8 @@ sep = ";"   # PyInstaller --add-data separator on Windows
 if not (ROOT / "branding" / "lumina.ico").is_file():
     subprocess.run([sys.executable, str(ROOT / "Installer" / "make_icon.py")], check=True)
 
-data = ["ml", "node", "exonet.onnx", "branding/lumina.ico", "branding/lumina-256.png",
+data = ["ml", "node", "exonet.onnx", *(["exonet.onnx.data"] if (ROOT / "exonet.onnx.data").is_file() else []),
+        "branding/lumina.ico", "branding/lumina-256.png",
         "Installer/python-embed", "Installer/get-pip.py"]
 cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--windowed",
        "--uac-admin", "--name", "LuminaSetup", "--icon", str(ROOT / "branding" / "lumina.ico"),

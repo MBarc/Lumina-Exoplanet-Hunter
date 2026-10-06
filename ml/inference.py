@@ -372,8 +372,21 @@ class ExoNetInference:
                 "scalar_features": {0: "batch_size"},
                 "score":           {0: "batch_size"},
             },
+            # Newer PyTorch defaults to the dynamo exporter, which ignores
+            # dynamic_axes (the model then only accepts batch size 1) and splits
+            # weights into a .data file. The classic exporter does neither.
+            dynamo=False,
         )
-        print(f"Exported ONNX model to {onnx_path}")
+        # Nodes score several candidates at once: refuse a model that can't.
+        import onnxruntime as ort  # noqa: PLC0415
+        sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+        feed = {i.name: np.zeros([3] + list(t.shape[1:]), dtype=np.float32)
+                for i, t in zip(sess.get_inputs(), (dummy_global, dummy_local, dummy_odd, dummy_even,
+                                                    dummy_secondary, dummy_centroid, dummy_scalar))}
+        out = sess.run(None, feed)[0]
+        if out.shape[0] != 3:
+            raise RuntimeError(f"exported model does not accept a batch of 3 (got output {out.shape})")
+        print(f"Exported ONNX model to {onnx_path} (batch check passed)")
 
 
 class EnsembleInference:
