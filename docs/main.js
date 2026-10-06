@@ -222,6 +222,7 @@ const STAR_PREFIX = { kepler: "KIC", k2: "EPIC", tess: "TIC" };
 const CATALOG_BADGE = {
   new: ["NEW", "badge-new"],
   known_planet: ["KNOWN PLANET", "badge-known"],
+  unchecked: ["NOT YET CHECKED", "badge-known"],
   known_candidate: ["KNOWN CANDIDATE", "badge-known"],
   known_false_positive: ["KNOWN FALSE POSITIVE", "badge-fp"],
 };
@@ -242,11 +243,11 @@ function renderCandidates(list) {
     const period   = Number.isFinite(c.period_days) ? `${c.period_days.toFixed(3)}d` : "—";
     const depth    = Number.isFinite(c.depth_ppm)   ? `${Math.round(c.depth_ppm)}ppm` : "—";
     const reported = c.reported_at  ? new Date(c.reported_at).toISOString().slice(0, 16).replace("T", " ") : "—";
-    const star     = `${STAR_PREFIX[(c.mission || "").toLowerCase()] || "STAR"} ${c.tic_id}`;
-    const cat      = c.catalog || { status: "new" };
-    let [label, cls] = CATALOG_BADGE[cat.status] || CATALOG_BADGE.new;
+    const star     = `${STAR_PREFIX[(c.mission || "").toLowerCase()] || "STAR"} ${parseInt(c.tic_id, 10) || "?"}`;
+    const cat      = c.catalog || { status: "unchecked" };
+    let [label, cls] = CATALOG_BADGE[cat.status] || CATALOG_BADGE.unchecked;
     if (cat.status === "new" && cat.known_star) label = "NEW ON KNOWN STAR";
-    if (cat.name) label += ` · ${cat.name}`;
+    if (cat.name) label += cat.alias ? ` · alias of ${cat.name}` : ` · ${cat.name}`;
 
     return `
       <a class="candidate-row ${strong}" href="candidate.html?id=${encodeURIComponent(c.id)}">

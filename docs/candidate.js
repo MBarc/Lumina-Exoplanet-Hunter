@@ -13,20 +13,25 @@ const esc = v => String(v ?? "").replace(/[&<>"']/g, ch =>
 const STAR = { kepler: "KIC", k2: "EPIC", tess: "TIC" };
 const BADGE = {
   new: ["NEW", "badge-new"],
+  unchecked: ["NOT YET CHECKED", "badge-known"],
   known_planet: ["KNOWN PLANET", "badge-known"],
   known_candidate: ["KNOWN CANDIDATE", "badge-known"],
   known_false_positive: ["KNOWN FALSE POSITIVE", "badge-fp"],
 };
 
+// Star ids are digits (enforced by the API); re-parse anyway because they end
+// up in links and in code a reviewer may run.
+const starNum = c => { const n = parseInt(c.tic_id, 10); return Number.isFinite(n) ? n : null; };
+
 function starLabel(c) {
-  return `${STAR[(c.mission || "").toLowerCase()] || "STAR"} ${c.tic_id}`;
+  return `${STAR[(c.mission || "").toLowerCase()] || "STAR"} ${starNum(c) ?? "?"}`;
 }
 
 function badge(c) {
-  const cat = c.catalog || { status: "new" };
-  let [text, cls] = BADGE[cat.status] || BADGE.new;
+  const cat = c.catalog || { status: "unchecked" };
+  let [text, cls] = BADGE[cat.status] || BADGE.unchecked;
   if (cat.status === "new" && cat.known_star) text = "NEW ON KNOWN STAR";
-  if (cat.name) text += ` · ${cat.name}`;
+  if (cat.name) text += cat.alias ? ` · alias of ${cat.name}` : ` · ${cat.name}`;
   return [text, cls];
 }
 
@@ -91,8 +96,10 @@ function render(c) {
         "parts per million of the star's light blocked"),
     row("Signal-to-noise", fmt(c.snr, 1), "depth vs. noise over all in-transit points"),
     row("Transits observed", fmt(c.n_transits, 0), ""),
-    row("Odd/even difference", fmt(c.odd_even_diff, 3), "large values suggest an eclipsing binary"),
-    row("Secondary eclipse depth", fmt(c.secondary_depth, 3), "a dip half an orbit later suggests two stars"),
+    row("Odd/even difference", Number.isFinite(c.odd_even_diff_ppm) ? `${Math.round(c.odd_even_diff_ppm).toLocaleString()} ppm` : "—",
+        "depth difference between odd and even transits; large values suggest an eclipsing binary"),
+    row("Secondary eclipse depth", Number.isFinite(c.secondary_depth_ppm) ? `${Math.round(c.secondary_depth_ppm).toLocaleString()} ppm` : "—",
+        "a dip half an orbit later suggests two stars"),
     row("Centroid shift", `${fmt(c.centroid_shift, 4)} px`, "the star's apparent position moving during the dip suggests a neighbour"),
     row("ExoNet score", `${fmt((c.exonet_score || 0) * 100, 1)}%`, "the model's planet-likeness score"),
     row("Catalogue match", cat.status ? esc(badge(c)[0]) : "not checked yet",
@@ -103,15 +110,26 @@ function render(c) {
   ].join("");
 
   const mission = (c.mission || "").toLowerCase();
-  const target = mission === "tess" ? `TIC ${c.tic_id}` : mission === "k2" ? `EPIC ${c.tic_id}` : `KIC ${c.tic_id}`;
-  const author = mission === "tess" ? "SPOC" : mission === "k2" ? "K2" : "Kepler";
+  const sid = starNum(c);
+  const target = `${STAR[mission] || "KIC"} ${sid ?? 0}`;
+  // Same product the node used: Kepler/K2 long cadence; TESS 2-min SPOC when the
+  // file was a 2-min light curve, otherwise let lightkurve pick.
+  const search = mission === "tess"
+    ? (/-s_lc\.fits$/.test(c.fits_url || "") ? `author="SPOC", exptime=120` : "")
+    : `author="${mission === "k2" ? "K2" : "Kepler"}", exptime=1800`;
+  const P = fmt(c.period_days, 6), D = fmt(c.duration_days, 5);
+  const hasT0 = Number.isFinite(c.t0);
   document.getElementById("d-code").textContent = [
     "import lightkurve as lk",
-    `lc = lk.search_lightcurve("${target}", author="${author}").download_all().stitch().flatten()`,
-    `lc.fold(period=${fmt(c.period_days, 6)}, epoch_time=${fmt(c.t0, 6)}).scatter()`,
+    `lc = lk.search_lightcurve("${target}"${search ? ", " + search : ""}).download_all().stitch()`,
+    ...(hasT0 ? [
+      `T0 = ${fmt(c.t0, 6)}  # mission clock, same as lc.time`,
+      `mask = lc.create_transit_mask(period=${P}, transit_time=T0, duration=${D})`,
+      `lc.flatten(mask=mask).fold(period=${P}, epoch_time=T0).scatter()`,
+    ] : [`lc.flatten().fold(period=${P}).scatter()  # no transit time recorded`]),
   ].join("\n");
 
-  const id = encodeURIComponent(c.tic_id);
+  const id = encodeURIComponent(sid ?? "");
   const exofop = mission === "tess"
     ? `https://exofop.ipac.caltech.edu/tess/target.php?id=${id}`
     : mission === "kepler" ? `https://exofop.ipac.caltech.edu/kepler/edit_target.php?id=${id}` : null;

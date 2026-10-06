@@ -15,14 +15,12 @@ from bson import ObjectId
 from fastapi import APIRouter, Query, HTTPException, Request
 
 from api import database as db
-from api.catalog import classify
+from api.catalog import classify, t0_bjd_of
 from api.routes.nodes import finder_names, node_name
 from api.schemas import CandidateSubmission, CandidateResponse, ProcessedSubmission
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 
-# Mission clocks are BJD_TDB minus a constant: Kepler/K2 BKJD, TESS BTJD.
-_BJD_OFFSET = {"kepler": 2454833.0, "k2": 2454833.0, "tess": 2457000.0}
 VIEW_FIELDS = ("global_view", "local_view", "odd_view", "even_view", "secondary_view")
 
 
@@ -51,9 +49,9 @@ async def submit_candidate(request: Request, payload: CandidateSubmission):
     doc["worker_hostname"] = node_name(request, payload.worker_hostname)
     doc["reported_at"] = now
     doc["verified"] = False
-    offset = _BJD_OFFSET.get(payload.mission.lower())
-    doc["t0_bjd"] = payload.t0 + offset if payload.t0 is not None and offset is not None else None
-    doc["catalog"] = await classify(payload.mission, payload.tic_id, payload.period_days)
+    doc["t0_bjd"] = t0_bjd_of(payload.mission, payload.t0)
+    doc["catalog"] = await classify(payload.mission, payload.tic_id, payload.period_days,
+                                    payload.t0, payload.duration_days)
 
     result = await db.candidates().insert_one(doc)
 
@@ -72,7 +70,7 @@ async def list_candidates(
     hostname: str | None = Query(None,  description="Filter to one worker node"),
     limit:    int        = Query(20,    description="Max results", ge=1, le=200),
     min_score: float     = Query(0.0,   description="Minimum ExoNet score filter"),
-    status:   str | None = Query(None, pattern="^(new|known_planet|known_candidate|known_false_positive)$",
+    status:   str | None = Query(None, pattern="^(new|unchecked|known_planet|known_candidate|known_false_positive)$",
                                  description="Catalogue cross-match status, e.g. 'new'"),
 ):
     """

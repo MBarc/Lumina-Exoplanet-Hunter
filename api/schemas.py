@@ -53,17 +53,21 @@ class CandidateSubmission(BaseModel):
     """
     model_config = ConfigDict(allow_inf_nan=False)
 
-    worker_hostname:  str
-    tic_id:           str
-    mission:          str
+    worker_hostname:  str = Field(max_length=64)
+    # Star ids end up in links and in code reviewers copy and run (the
+    # lightkurve snippet), so only digits; missions from a fixed list.
+    tic_id:           str = Field(pattern=r"^\d{1,12}$")
+    mission:          Literal["kepler", "k2", "tess"]
     sector:           int | None = None
     period_days:      float
     duration_days:    float
     depth_ppm:        float
     bls_power:        float
     exonet_score:     float = Field(ge=0.0, le=1.0)
-    secondary_depth:  float = 0.0
+    secondary_depth:  float = 0.0          # model units (normalised flux); the *_ppm fields are physical
     odd_even_diff:    float = 0.0
+    secondary_depth_ppm: float | None = None
+    odd_even_diff_ppm:   float | None = None
     # Ephemeris: with period + t0 + duration anyone can re-fold the public
     # light curve and redraw the transit. t0 is mid-transit in the mission's
     # clock (BKJD / BTJD); the server stores the BJD_TDB equivalent.
@@ -102,6 +106,8 @@ class CandidateResponse(BaseModel):
     t0_bjd:           float | None = None
     n_transits:       float | None = None
     snr:              float | None = None
+    secondary_depth_ppm: float | None = None
+    odd_even_diff_ppm:   float | None = None
     secondary_depth:  float | None = None
     odd_even_diff:    float | None = None
     centroid_shift:   float | None = None
@@ -158,6 +164,8 @@ class CatalogObject(BaseModel):
     name:    str = Field(max_length=80)          # "Kepler-13 b", "KOI-13.01", "TOI-1062.01"
     status:  Literal["known_planet", "known_candidate", "known_false_positive"]
     period:  float | None = Field(None, gt=0)
+    t0_bjd:  float | None = None                 # a mid-transit time, BJD_TDB
+    duration_days: float | None = Field(None, gt=0)
 
 class CatalogUpload(BaseModel):
     source:  str = Field(max_length=200)

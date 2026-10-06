@@ -7,6 +7,7 @@ POST /admin/model-refresh   — trigger a model reload on the API (future use)
 """
 
 from __future__ import annotations
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
@@ -61,11 +62,16 @@ async def replace_catalog(payload: CatalogUpload):
     """
     if not payload.objects:
         raise HTTPException(status_code=400, detail="Refusing to replace the catalogue with nothing.")
-    staging = db.db()["known_objects_staging"]
-    await staging.drop()
-    await staging.insert_many([o.model_dump() for o in payload.objects])
-    await staging.rename("known_objects", dropTarget=True)
-    await db.known_objects().create_index("star")
+    # Per-request staging name: two syncs at once can't wipe each other's
+    # half-built catalogue. Index before the swap so lookups are never slow.
+    staging = db.db()[f"known_objects_staging_{uuid.uuid4().hex}"]
+    try:
+        await staging.insert_many([o.model_dump() for o in payload.objects])
+        await staging.create_index("star")
+        await staging.rename("known_objects", dropTarget=True)
+    except Exception:
+        await staging.drop()
+        raise
     relabelled = await relabel_all()
     return {"objects": len(payload.objects), "source": payload.source, "candidates_relabelled": relabelled}
 
