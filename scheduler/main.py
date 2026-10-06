@@ -1,7 +1,7 @@
 """
 Lumina Scheduler — autonomous task runner for the Lumina platform.
 
-Runs three recurring tasks:
+Runs recurring tasks (MAST sync, queue health, catalogue sync):
   mast_sync     every 24 hours — discovers new MAST observations, populates queue
   queue_health  every 5 minutes — monitors depth, recovers stalled jobs
   (model_refresh is triggered manually via POST /admin/model-refresh on the API)
@@ -26,6 +26,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from scheduler.config import get_settings
 from scheduler.tasks.mast_sync import run_mast_sync
 from scheduler.tasks.queue_health import run_queue_health
+from scheduler.tasks.catalog_sync import run_catalog_sync
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -67,6 +68,11 @@ async def task_mast_sync():
 async def task_queue_health():
     log.info("--- Queue health check ---")
     result = await run_queue_health()
+    await _log_result(result)
+
+async def task_catalog_sync():
+    log.info("--- Known-object catalogue sync ---")
+    result = await run_catalog_sync()
     await _log_result(result)
 
 
@@ -123,6 +129,17 @@ async def main() -> None:
         max_instances    = 1,
         misfire_grace_time = 3600,
         next_run_time = datetime.now(timezone.utc),  # run immediately on start
+    )
+
+    # Known-object catalogue: daily, and at startup so cross-matching works from day one.
+    scheduler.add_job(
+        task_catalog_sync,
+        trigger   = IntervalTrigger(hours=24),
+        id        = "catalog_sync",
+        name      = "Known-object catalogue sync",
+        max_instances    = 1,
+        misfire_grace_time = 3600,
+        next_run_time = datetime.now(timezone.utc),
     )
 
     scheduler.start()

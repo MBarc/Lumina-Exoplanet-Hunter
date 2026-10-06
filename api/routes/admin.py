@@ -12,7 +12,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
 from api import database as db
-from api.schemas import SchedulerLogEntry
+from api.catalog import relabel_all
+from api.schemas import CatalogUpload, SchedulerLogEntry
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -49,6 +50,24 @@ async def get_scheduler_log(limit: int = 20):
         .to_list(length=limit)
     )
     return docs
+
+
+@router.put("/catalog")
+async def replace_catalog(payload: CatalogUpload):
+    """Replace the known-object catalogue (KOI/TOI/K2) and relabel candidates.
+
+    Built in a side collection and swapped in with one rename, so lookups
+    never see an empty catalogue mid-refresh.
+    """
+    if not payload.objects:
+        raise HTTPException(status_code=400, detail="Refusing to replace the catalogue with nothing.")
+    staging = db.db()["known_objects_staging"]
+    await staging.drop()
+    await staging.insert_many([o.model_dump() for o in payload.objects])
+    await staging.rename("known_objects", dropTarget=True)
+    await db.known_objects().create_index("star")
+    relabelled = await relabel_all()
+    return {"objects": len(payload.objects), "source": payload.source, "candidates_relabelled": relabelled}
 
 
 @router.post("/devices/{device_id}/revoke")

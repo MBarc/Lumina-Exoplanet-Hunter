@@ -15,6 +15,7 @@ from bson import ObjectId
 from fastapi import APIRouter, Query, HTTPException, Request
 
 from api import database as db
+from api.catalog import classify
 from api.routes.nodes import finder_names, node_name
 from api.schemas import CandidateSubmission, CandidateResponse, ProcessedSubmission
 
@@ -52,6 +53,7 @@ async def submit_candidate(request: Request, payload: CandidateSubmission):
     doc["verified"] = False
     offset = _BJD_OFFSET.get(payload.mission.lower())
     doc["t0_bjd"] = payload.t0 + offset if payload.t0 is not None and offset is not None else None
+    doc["catalog"] = await classify(payload.mission, payload.tic_id, payload.period_days)
 
     result = await db.candidates().insert_one(doc)
 
@@ -70,6 +72,8 @@ async def list_candidates(
     hostname: str | None = Query(None,  description="Filter to one worker node"),
     limit:    int        = Query(20,    description="Max results", ge=1, le=200),
     min_score: float     = Query(0.0,   description="Minimum ExoNet score filter"),
+    status:   str | None = Query(None, pattern="^(new|known_planet|known_candidate|known_false_positive)$",
+                                 description="Catalogue cross-match status, e.g. 'new'"),
 ):
     """
     Return recent candidates, newest first.
@@ -77,12 +81,15 @@ async def list_candidates(
     Pass ?hostname=X to scope to a single contributor's findings (used by
     the personal dashboard). Omit it for the global public view.
     Pass ?min_score=0.5 to filter out low-confidence detections.
+    Pass ?status=new for signals that match nothing in the KOI/TOI/K2 catalogues.
     """
     query: dict = {}
     if hostname:
         query["worker_hostname"] = hostname
     if min_score > 0:
         query["exonet_score"] = {"$gte": min_score}
+    if status:
+        query["catalog.status"] = status
 
     cursor = db.candidates().find(
         query,

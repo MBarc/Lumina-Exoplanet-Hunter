@@ -7,7 +7,7 @@ and ensures the same model is reused across routes rather than duplicated.
 
 from __future__ import annotations
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -112,6 +112,8 @@ class CandidateResponse(BaseModel):
     odd_view:         list[float] = []
     even_view:        list[float] = []
     secondary_view:   list[float] = []
+    # Catalogue cross-match: {status, known_star, name, catalog_period}
+    catalog:          dict[str, Any] | None = None
 
 
 # ── Processed log ─────────────────────────────────────────────────────────────
@@ -146,6 +148,20 @@ class LeaderboardEntry(BaseModel):
 class ActivityPoint(BaseModel):
     hour:   str     # ISO 8601 hour string
     count:  int
+
+
+# ── Known-object catalogue ────────────────────────────────────────────────────
+
+class CatalogObject(BaseModel):
+    model_config = ConfigDict(allow_inf_nan=False)
+    star:    str = Field(max_length=40)          # api.catalog.star_key form, e.g. "kepler:9941662"
+    name:    str = Field(max_length=80)          # "Kepler-13 b", "KOI-13.01", "TOI-1062.01"
+    status:  Literal["known_planet", "known_candidate", "known_false_positive"]
+    period:  float | None = Field(None, gt=0)
+
+class CatalogUpload(BaseModel):
+    source:  str = Field(max_length=200)
+    objects: list[CatalogObject] = Field(max_length=200_000)
 
 
 # ── Device enrollment ─────────────────────────────────────────────────────────
