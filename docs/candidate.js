@@ -73,13 +73,23 @@ function render(c) {
   const lv = (c.local_view || []).filter(Number.isFinite);
   const pad = lv.length ? 0.15 * (Math.max(...lv) - Math.min(...lv)) : 0;
   const transitRange = lv.length ? [Math.min(...lv) - pad, Math.max(...lv) + pad] : null;
-  document.getElementById("p-local").innerHTML = plot([{ y: c.local_view || [], color: "#00c8ff" }], { mark: "center" });
+  // Physical (ppm) curves when the node sent them: the transit and the view half
+  // an orbit later share one scale, so a real secondary eclipse looks as big as it is.
+  const tp = (c.transit_view_ppm || []).filter(Number.isFinite);
+  const ppmRange = tp.length ? [Math.min(...tp) * 1.15, Math.max(...tp, 0) + 0.15 * Math.abs(Math.min(...tp))] : null;
+  document.getElementById("p-local").innerHTML = tp.length
+    ? plot([{ y: c.transit_view_ppm, color: "#00c8ff" }], { mark: "center", range: ppmRange })
+    : plot([{ y: c.local_view || [], color: "#00c8ff" }], { mark: "center" });
   document.getElementById("p-global").innerHTML = plot([{ y: c.global_view || [], color: "#00c8ff" }], { mark: "center" });
   document.getElementById("p-oddeven").innerHTML = plot([
     { y: c.odd_view || [], color: "#06d6a0" }, { y: c.even_view || [], color: "#ffd166" }],
     { mark: "center", range: transitRange });
-  document.getElementById("p-secondary").innerHTML = plot([{ y: c.secondary_view || [], color: "#00c8ff" }],
-    { mark: "center", range: transitRange });
+  // Only the correctly centred ppm curve is shown here: the model's own
+  // secondary_view input repeats the primary transit (known bug, fixed at the
+  // next retrain), so plotting it would fake an eclipsing binary.
+  document.getElementById("p-secondary").innerHTML = (c.secondary_view_ppm || []).length
+    ? plot([{ y: c.secondary_view_ppm, color: "#00c8ff" }], { mark: "center", range: ppmRange })
+    : `<div class="empty-state">NOT AVAILABLE FOR THIS CANDIDATE</div>`;
 
   const cat = c.catalog || {};
   const hours = Number.isFinite(c.duration_days) ? c.duration_days * 24 : null;

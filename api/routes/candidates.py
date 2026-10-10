@@ -21,7 +21,8 @@ from api.schemas import CandidateSubmission, CandidateResponse, ProcessedSubmiss
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
 
-VIEW_FIELDS = ("global_view", "local_view", "odd_view", "even_view", "secondary_view")
+VIEW_FIELDS = ("global_view", "local_view", "odd_view", "even_view", "secondary_view",
+               "transit_view_ppm", "secondary_view_ppm")
 
 
 def _serialize(doc: dict) -> dict:

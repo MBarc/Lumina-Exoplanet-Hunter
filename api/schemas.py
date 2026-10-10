@@ -86,6 +86,10 @@ class CandidateSubmission(BaseModel):
     odd_view:         list[float] = Field([], max_length=512)
     even_view:        list[float] = Field([], max_length=512)
     secondary_view:   list[float] = Field([], max_length=512)
+    # Reviewer curves in ppm on one physical scale (correctly centred; the model's
+    # secondary_view input above repeats the primary until the next retrain)
+    transit_view_ppm:   list[float] = Field([], max_length=512)
+    secondary_view_ppm: list[float] = Field([], max_length=512)
 
 class CandidateResponse(BaseModel):
     """Candidate as returned to the dashboard / public site."""
@@ -118,6 +122,8 @@ class CandidateResponse(BaseModel):
     odd_view:         list[float] = []
     even_view:        list[float] = []
     secondary_view:   list[float] = []
+    transit_view_ppm:   list[float] = []
+    secondary_view_ppm: list[float] = []
     # Catalogue cross-match: {status, known_star, name, catalog_period}
     catalog:          dict[str, Any] | None = None
 

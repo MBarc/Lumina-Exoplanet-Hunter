@@ -101,6 +101,12 @@ class TransitCandidate:
     noise_floor: float = 0.001
     depth_frac: float = 0.0       # physical fractional depth on unclipped relative flux; for reporting
     transit_snr: float = 0.0      # depth / robust out-of-transit noise * sqrt(in-transit points)
+    # Reviewer diagnostics on unclipped relative flux (see _physical_diagnostics);
+    # NOT model inputs.
+    secondary_frac: float = 0.0
+    odd_even_frac: float = 0.0
+    transit_view_rel: np.ndarray   = field(default_factory=lambda: np.zeros(201, dtype=np.float32))
+    secondary_view_rel: np.ndarray = field(default_factory=lambda: np.zeros(201, dtype=np.float32))
     # Raw (prenorm) local-scale views — NOT per-view z-scored, analogous to
     # raw_global_view.  Used as channel 1 of the 2-channel local branch inputs
     # so the model sees both the normalised transit shape and its original scale.
@@ -357,6 +363,44 @@ def _detrend_iterative(time: np.ndarray, flux: np.ndarray) -> np.ndarray:
 
     return (flux - trend_all) / trend_all
 
+
+
+def _physical_diagnostics(
+    time: np.ndarray, rel: np.ndarray, period: float, t0: float, duration: float,
+) -> dict:
+    """Vetting diagnostics for people, measured on detrended relative flux.
+
+    The model's secondary/odd-even inputs come from clipped, z-scored flux (and
+    its secondary view is centred on the primary, see _compute_secondary_view);
+    these are separate, physical measurements for reviewers:
+      secondary_frac   depth half an orbit after the transit (circular orbit)
+      odd_even_frac    |depth of odd transits - depth of even transits|
+      transit_view / secondary_view   201-bin relative-flux curves around
+                       phase 0 and phase 0.5 on the same scale (for plots)
+    """
+    out = {"secondary_frac": 0.0, "odd_even_frac": 0.0,
+           "transit_view": np.zeros(N_LOCAL_BINS, dtype=np.float32),
+           "secondary_view": np.zeros(N_LOCAL_BINS, dtype=np.float32)}
+    if period <= 0 or duration <= 0:
+        return out
+    dt = ((time - t0 + 0.5 * period) % period) - 0.5 * period          # days from transit
+    ds = ((time - t0) % period) - 0.5 * period                          # days from phase 0.5
+    outside = (np.abs(dt) > duration) & (np.abs(ds) > duration)
+    if outside.sum() < 10:
+        return out
+    base = float(np.median(rel[outside]))
+    sec = np.abs(ds) < 0.5 * duration
+    if sec.sum() >= 3:
+        out["secondary_frac"] = base - float(np.mean(rel[sec]))
+    n = np.floor((time - t0) / period + 0.5).astype(int)               # transit number
+    inside = np.abs(dt) < 0.5 * duration
+    odd, even = inside & (n % 2 == 1), inside & (n % 2 == 0)
+    if odd.sum() >= 3 and even.sum() >= 3:
+        out["odd_even_frac"] = abs(float(np.mean(rel[odd])) - float(np.mean(rel[even])))
+    w = min(2.0 * duration, 0.4 * period)
+    out["transit_view"] = _bin_phase_raw(dt, rel - base, N_LOCAL_BINS, -w, w)
+    out["secondary_view"] = _bin_phase_raw(ds, rel - base, N_LOCAL_BINS, -w, w)
+    return out
 
 
 def _physical_depth(
@@ -831,6 +875,11 @@ def _compute_secondary_view(
     _zeros = np.zeros(N_LOCAL_BINS, dtype=np.float32)
     if period <= 0:
         return _zeros, _zeros
+    # KNOWN BUG (found by review 2026-10-10): this maps phase 0 (the primary
+    # transit) to 0, so the 'secondary' view repeats the primary. Trained
+    # models expect it, so it stays until the next cache rebuild + retrain;
+    # the correct shift is ((phase + 1.0) % 1.0) - 0.5. Reviewer-facing
+    # diagnostics use _physical_diagnostics instead.
     phase_shifted = (phase - 0.5) % 1.0 - 0.5
     half_window = min(2 * duration / period, 0.4)
     raw_secondary_view = _bin_phase_raw(phase_shifted, flux, N_LOCAL_BINS, -half_window, half_window)
@@ -1135,6 +1184,7 @@ def preprocess_multi(
         cshift                                     = _centroid_shift(time, centr1, centr2, period, t0, duration)
         n_tr                                       = _count_transits(time, period, t0, duration)
         phys                                       = _physical_depth(time, rel_flux, period, t0, duration)
+        diag                                       = _physical_diagnostics(time, rel_flux, period, t0, duration)
         centroid_curve                             = _compute_centroid_curve(time, centr1, centr2, period, t0)
 
         results.append(TransitCandidate(
@@ -1144,6 +1194,10 @@ def preprocess_multi(
             depth              = c["depth"],
             depth_frac         = phys[0],
             transit_snr        = phys[1],
+            secondary_frac     = diag["secondary_frac"],
+            odd_even_frac      = diag["odd_even_frac"],
+            transit_view_rel   = diag["transit_view"],
+            secondary_view_rel = diag["secondary_view"],
             bls_power          = c["power"],
             global_view        = global_view,
             local_view         = local_view,
@@ -1235,6 +1289,7 @@ def preprocess(
         cshift                                     = _centroid_shift(time, centr1, centr2, period, t0, duration)
         n_tr                                       = _count_transits(time, period, t0, duration)
         phys                                       = _physical_depth(time, rel_flux, period, t0, duration)
+        diag                                       = _physical_diagnostics(time, rel_flux, period, t0, duration)
         centroid_curve                             = _compute_centroid_curve(time, centr1, centr2, period, t0)
 
         results.append(TransitCandidate(
@@ -1244,6 +1299,10 @@ def preprocess(
             depth              = c["depth"],
             depth_frac         = phys[0],
             transit_snr        = phys[1],
+            secondary_frac     = diag["secondary_frac"],
+            odd_even_frac      = diag["odd_even_frac"],
+            transit_view_rel   = diag["transit_view"],
+            secondary_view_rel = diag["secondary_view"],
             bls_power          = c["power"],
             global_view        = global_view,
             local_view         = local_view,

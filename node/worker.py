@@ -96,7 +96,6 @@ class Worker:
         for c, score in zip(candidates, scores):
             big = score >= keep_views   # light-curve arrays only for interesting ones
             view = lambda a: a.tolist() if big else []   # noqa: E731
-            ppm_per_unit = float(c.depth_frac) * 1e6 / float(c.depth) if c.depth else 0.0
             self.api.post("/candidates", {
                 "worker_hostname": self.host,
                 "tic_id": job["tic_id"], "mission": job["mission"], "sector": job.get("sector"),
@@ -108,9 +107,12 @@ class Worker:
                 "n_transits": float(c.n_transits),
                 "snr": float(c.transit_snr),
                 "secondary_depth": float(c.secondary_depth), "odd_even_diff": float(c.odd_even_diff),
-                # Same model-units -> physical scale as the primary depth.
-                "secondary_depth_ppm": float(c.secondary_depth) * ppm_per_unit,
-                "odd_even_diff_ppm": float(c.odd_even_diff) * ppm_per_unit,
+                # Measured directly on the unclipped light curve (not rescaled model values).
+                "secondary_depth_ppm": float(c.secondary_frac) * 1e6,
+                "odd_even_diff_ppm": float(c.odd_even_frac) * 1e6,
+                # Transit and half-an-orbit-later curves on one physical (ppm) scale, for reviewers.
+                "transit_view_ppm": (c.transit_view_rel * 1e6).tolist() if big else [],
+                "secondary_view_ppm": (c.secondary_view_rel * 1e6).tolist() if big else [],
                 "centroid_shift": float(c.centroid_shift),
                 "fits_url": job["fits_url"], "model_sha256": self.model_sha256,
                 "global_view": view(c.global_view), "local_view": view(c.local_view),
