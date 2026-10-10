@@ -13,15 +13,21 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # ── Heartbeat ──────────────────────────────────────────────────────────────────
 
+JOB_ID = r"^[0-9a-f]{24}$"
+STAR_ID = r"^\d{1,12}$"
+
+
 class HeartbeatRequest(BaseModel):
-    hostname:          str
-    uptime_seconds:    int   = 0
-    stars_analyzed:    int   = 0
-    candidates_found:  int   = 0
-    cpu_percent:       float = 0.0
-    ram_percent:       float = 0.0
-    current_tic_id:    str | None = None
-    current_sector:    int | None = None
+    # Untrusted (volunteer machines): finite, bounded values only.
+    model_config = ConfigDict(allow_inf_nan=False)
+    hostname:          str   = Field(max_length=64)
+    uptime_seconds:    int   = Field(0, ge=0, le=10 * 365 * 86400)
+    stars_analyzed:    int   = Field(0, ge=0, le=10**9)
+    candidates_found:  int   = Field(0, ge=0, le=10**9)
+    cpu_percent:       float = Field(0.0, ge=0.0, le=100.0)
+    ram_percent:       float = Field(0.0, ge=0.0, le=100.0)
+    current_tic_id:    str | None = Field(None, pattern=STAR_ID)
+    current_sector:    int | None = Field(None, ge=0, le=10_000)
 
 
 # ── Work queue ─────────────────────────────────────────────────────────────────
@@ -53,10 +59,11 @@ class CandidateSubmission(BaseModel):
     """
     model_config = ConfigDict(allow_inf_nan=False)
 
+    job_id:           str = Field(pattern=JOB_ID)    # must be a job this device holds
     worker_hostname:  str = Field(max_length=64)
     # Star ids end up in links and in code reviewers copy and run (the
     # lightkurve snippet), so only digits; missions from a fixed list.
-    tic_id:           str = Field(pattern=r"^\d{1,12}$")
+    tic_id:           str = Field(pattern=STAR_ID)
     mission:          Literal["kepler", "k2", "tess"]
     sector:           int | None = None
     period_days:      float
@@ -131,13 +138,18 @@ class CandidateResponse(BaseModel):
 # ── Processed log ─────────────────────────────────────────────────────────────
 
 class ProcessedSubmission(BaseModel):
-    """Posted by a worker when it finishes processing a star (even if no candidate found)."""
-    worker_hostname:    str
-    tic_id:             str
-    mission:            str
-    sector:             int | None = None
-    duration_seconds:   float
-    candidates_found:   int = 0
+    """Posted by a worker when it finishes processing a star (even if no candidate found).
+
+    Untrusted: must name a job this device currently holds; values bounded.
+    """
+    model_config = ConfigDict(allow_inf_nan=False)
+    job_id:             str = Field(pattern=JOB_ID)
+    worker_hostname:    str = Field(max_length=64)
+    tic_id:             str = Field(pattern=STAR_ID)
+    mission:            Literal["kepler", "k2", "tess"]
+    sector:             int | None = Field(None, ge=0, le=10_000)
+    duration_seconds:   float = Field(ge=0.0, le=86_400.0)
+    candidates_found:   int = Field(0, ge=0, le=100)
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────

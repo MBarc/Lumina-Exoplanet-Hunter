@@ -24,9 +24,16 @@ class Settings(BaseSettings):
     api_key: str = "dev-insecure-key"
 
     # Volunteer nodes never see api_key. They enroll once (POST /nodes/enroll)
-    # and get their own revocable device token. Empty = open enrollment;
-    # set a value to restrict joining (e.g. a private pilot).
+    # and get their own revocable device token. Joining needs enroll_token
+    # (invite / pilot) unless open_enrollment is explicitly turned on.
     enroll_token: str = ""
+    open_enrollment: bool = False
+
+    # Refuse to start with an empty or default api_key; only for local test stacks.
+    allow_insecure_dev: bool = False
+
+    # Most jobs one device may hold at once (stops a node hoarding the queue).
+    max_assigned_per_node: int = 50
 
     # ── Queue behaviour ───────────────────────────────────────────────────────
     # How long (seconds) a job stays "assigned" before the server assumes the

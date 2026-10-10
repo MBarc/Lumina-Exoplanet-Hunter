@@ -97,7 +97,7 @@ class Worker:
             big = score >= keep_views   # light-curve arrays only for interesting ones
             view = lambda a: a.tolist() if big else []   # noqa: E731
             self.api.post("/candidates", {
-                "worker_hostname": self.host,
+                "job_id": job["job_id"], "worker_hostname": self.host,
                 "tic_id": job["tic_id"], "mission": job["mission"], "sector": job.get("sector"),
                 # Ephemeris: enough to re-fold the public light curve and redraw the transit.
                 "period_days": float(c.period), "duration_days": float(c.duration),
@@ -120,7 +120,7 @@ class Worker:
                 "secondary_view": view(c.secondary_view),
             })
         self.api.post("/candidates/processed", {
-            "worker_hostname": self.host,
+            "job_id": job["job_id"], "worker_hostname": self.host,
             "tic_id": job["tic_id"], "mission": job["mission"], "sector": job.get("sector"),
             "duration_seconds": time.monotonic() - t0, "candidates_found": len(candidates),
         })

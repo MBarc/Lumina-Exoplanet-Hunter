@@ -27,6 +27,10 @@ from api.routes.nodes import token_hash
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings = get_settings()
+    if settings.api_key in ("", "dev-insecure-key") and not settings.allow_insecure_dev:
+        raise RuntimeError("API_KEY is empty or the development default; set a strong API_KEY "
+                           "(or ALLOW_INSECURE_DEV=1 for a local test stack).")
     await database.connect()
     yield
     await database.disconnect()

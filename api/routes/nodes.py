@@ -39,9 +39,12 @@ async def enroll(payload: EnrollRequest):
     Join the network. Returns a per-device token, shown once; the server keeps
     only its SHA-256. Requires enroll_token when the server sets one.
     """
-    required = get_settings().enroll_token
-    if required and not hmac.compare_digest(payload.enroll_token, required):
-        raise HTTPException(status_code=403, detail="Invalid enrollment token.")
+    settings = get_settings()
+    if not settings.open_enrollment:
+        # Invite-only unless open enrollment is explicitly turned on; with no
+        # enroll_token configured, nobody can join.
+        if not settings.enroll_token or not hmac.compare_digest(payload.enroll_token, settings.enroll_token):
+            raise HTTPException(status_code=403, detail="Invalid enrollment token.")
 
     device_id = secrets.token_hex(8)
     token     = secrets.token_urlsafe(32)

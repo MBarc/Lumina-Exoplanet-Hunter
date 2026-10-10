@@ -25,6 +25,25 @@ VIEW_FIELDS = ("global_view", "local_view", "odd_view", "even_view", "secondary_
                "transit_view_ppm", "secondary_view_ppm")
 
 
+MAX_CANDIDATES_PER_JOB = 10     # preprocessing returns at most 5 per light curve
+
+
+def _oid(job_id: str) -> ObjectId:
+    try:
+        return ObjectId(job_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid job id.")
+
+
+async def _held_job(job_id: str, node: str, tic_id: str, mission: str) -> dict:
+    """The job, if this node currently holds it for this star; else 409."""
+    job = await db.work_queue().find_one({"_id": _oid(job_id), "status": "assigned", "assigned_to": node,
+                                          "tic_id": tic_id, "mission": mission})
+    if job is None:
+        raise HTTPException(status_code=409, detail="Job not held by this node (unknown, expired or already done).")
+    return job
+
+
 def _serialize(doc: dict) -> dict:
     """Convert MongoDB document to JSON-serialisable dict."""
     doc["id"] = str(doc.pop("_id"))
@@ -46,8 +65,14 @@ async def submit_candidate(request: Request, payload: CandidateSubmission):
     stored unverified until it is reproduced centrally.
     """
     now = datetime.now(timezone.utc)
+    node = node_name(request, payload.worker_hostname)
+    job = await _held_job(payload.job_id, node, payload.tic_id, payload.mission)
+    if await db.candidates().count_documents({"job_id": payload.job_id}) >= MAX_CANDIDATES_PER_JOB:
+        raise HTTPException(status_code=409, detail="Candidate limit for this job reached.")
     doc = payload.model_dump()
-    doc["worker_hostname"] = node_name(request, payload.worker_hostname)
+    doc["worker_hostname"] = node
+    doc["sector"] = job.get("sector")          # from the job, not the node
+    doc["fits_url"] = job.get("fits_url")      # what was actually assigned
     doc["reported_at"] = now
     doc["verified"] = False
     doc["t0_bjd"] = t0_bjd_of(payload.mission, payload.t0)
@@ -152,33 +177,27 @@ async def mark_processed(request: Request, payload: ProcessedSubmission):
     """
     now = datetime.now(timezone.utc)
     payload.worker_hostname = node_name(request, payload.worker_hostname)
+    # Atomic: only the device holding the job can complete it, and only once.
+    # Nothing is logged or counted unless this succeeds.
+    job = await db.work_queue().find_one_and_update(
+        {"_id": _oid(payload.job_id), "status": "assigned", "assigned_to": payload.worker_hostname,
+         "tic_id": payload.tic_id, "mission": payload.mission},
+        {"$set": {"status": "done", "done_at": now}},
+    )
+    if job is None:
+        raise HTTPException(status_code=409, detail="Job not held by this node (unknown, expired or already done).")
+    # Result integrity: completion is still the node's claim; central
+    # re-verification (sampled, incl. negatives) is the next step before any
+    # result is treated as authoritative.
     doc = payload.model_dump()
+    doc["sector"] = job.get("sector")
     doc["processed_at"] = now
+    doc["verified"] = False
 
     await db.processed_log().insert_one(doc)
-
-    # Keep the global counter in sync
     await db.network_stats().update_one(
         {"_id": "global"},
-        {
-            "$inc": {
-                "total_stars_analyzed": 1,
-                "total_compute_seconds": payload.duration_seconds,
-            }
-        },
+        {"$inc": {"total_stars_analyzed": 1, "total_compute_seconds": payload.duration_seconds}},
         upsert=True,
     )
-
-    # Mark the queue job as done
-    await db.work_queue().update_one(
-        {
-            "tic_id":      payload.tic_id,
-            "mission":     payload.mission,
-            "sector":      payload.sector,
-            "assigned_to": payload.worker_hostname,
-            "status":      "assigned",
-        },
-        {"$set": {"status": "done"}},
-    )
-
     return {"status": "ok"}

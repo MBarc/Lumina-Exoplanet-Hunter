@@ -52,6 +52,12 @@ async def get_next_jobs(
         {"$set": {"status": "queued", "assigned_to": None, "assigned_at": None}},
     )
 
+    # ── Per-device lease cap: a node can't hoard the queue ────────────────────
+    outstanding = await col.count_documents({"status": "assigned", "assigned_to": hostname})
+    limit = min(limit, settings.max_assigned_per_node - outstanding)
+    if limit <= 0:
+        return []
+
     # ── Claim jobs atomically using find-and-modify ───────────────────────────
     # We claim one job at a time in a loop rather than bulk-updating, so that
     # two workers racing for the same job never both win it.
