@@ -1,0 +1,8 @@
+# Pinned runtime for volunteer nodes (Python 3.12+). Installed by
+# installer/lumina_install.py into the node's own virtual environment.
+astropy==8.0.1
+numpy==2.5.1
+onnxruntime==1.28.0
+psutil==7.2.2
+requests==2.34.2
+scipy==1.18.0

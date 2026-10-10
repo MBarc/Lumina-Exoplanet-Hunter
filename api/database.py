@@ -51,6 +51,8 @@ def processed_log():    return db()["processed_log"]
 def node_telemetry():   return db()["node_telemetry"]
 def network_stats():    return db()["network_stats"]
 def scheduler_log():    return db()["scheduler_log"]
+def devices():          return db()["devices"]
+def known_objects():    return db()["known_objects"]
 
 
 # ── Index definitions ──────────────────────────────────────────────────────────
@@ -90,6 +92,15 @@ async def _ensure_indexes() -> None:
     await node_telemetry().create_indexes([
         IndexModel([("hostname", ASCENDING), ("reported_at", DESCENDING)]),
     ])
+
+    # devices: token lookup on every node request (only the SHA-256 is stored)
+    await devices().create_indexes([
+        IndexModel([("token_sha256", ASCENDING)], unique=True),
+    ])
+
+    # known_objects: catalogue cross-match looks up every candidate's star
+    await known_objects().create_indexes([IndexModel([("star", ASCENDING)])])
+    await candidates().create_indexes([IndexModel([("catalog.status", ASCENDING), ("exonet_score", DESCENDING)])])
 
     # scheduler_log: recent task runs, queried newest-first
     await scheduler_log().create_indexes([

@@ -8,20 +8,23 @@ POST /queue/populate    — admin/cron adds new targets to the queue
 
 from __future__ import annotations
 import asyncio
+import re
 from datetime import datetime, timezone, timedelta
 
 from bson import ObjectId
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 
 from api import database as db
 from api.config import get_settings
-from api.schemas import QueueItem, PopulateRequest, QueueStatus
+from api.routes.nodes import node_name
+from api.schemas import QueueItem, PopulateRequest, QueueStatus, STAR_ID
 
 router = APIRouter(prefix="/queue", tags=["queue"])
 
 
 @router.get("/next", response_model=list[QueueItem])
 async def get_next_jobs(
+    request:  Request,
     hostname: str = Query(..., description="Calling worker's hostname"),
     limit:    int = Query(10,  description="Number of jobs to claim", ge=1, le=100),
 ):
@@ -40,6 +43,7 @@ async def get_next_jobs(
     settings = get_settings()
     now      = datetime.now(timezone.utc)
     col      = db.work_queue()
+    hostname = node_name(request, hostname)
 
     # ── Re-queue stalled jobs from any worker ─────────────────────────────────
     # Do this before assigning new work so freed slots are available immediately.
@@ -48,6 +52,12 @@ async def get_next_jobs(
         {"status": "assigned", "assigned_at": {"$lt": cutoff}},
         {"$set": {"status": "queued", "assigned_to": None, "assigned_at": None}},
     )
+
+    # ── Per-device lease cap: a node can't hoard the queue ────────────────────
+    outstanding = await col.count_documents({"status": "assigned", "assigned_to": hostname})
+    limit = min(limit, settings.max_assigned_per_node - outstanding)
+    if limit <= 0:
+        return []
 
     # ── Claim jobs atomically using find-and-modify ───────────────────────────
     # We claim one job at a time in a loop rather than bulk-updating, so that
@@ -103,13 +113,14 @@ async def get_queue_status():
 
 
 @router.post("/release")
-async def release_jobs(hostname: str = Query(...)):
+async def release_jobs(request: Request, hostname: str = Query(...)):
     """
     Re-queue all jobs currently assigned to this worker.
 
     Called on graceful worker shutdown so jobs aren't held until the
     stall timeout expires.
     """
+    hostname = node_name(request, hostname)
     result = await db.work_queue().update_many(
         {"status": "assigned", "assigned_to": hostname},
         {"$set": {"status": "queued", "assigned_to": None, "assigned_at": None}},
@@ -128,11 +139,20 @@ async def populate_queue(payload: PopulateRequest):
     Duplicates (same tic_id + mission + sector) are silently skipped via
     the unique compound index — safe to call repeatedly with the same list.
     """
+    # ponytail: one job = one light-curve file. Shallow planets need a star's
+    # quarters/sectors stitched (the injection test did), so per-star jobs are the
+    # upgrade once the queue carries all of a star's files (Astra #12, open).
     now = datetime.now(timezone.utc)
     inserted = 0
     skipped  = 0
+    invalid  = 0
 
     for t in payload.targets:
+        # Reject here what /candidates/processed would 422 later, or the job loops forever.
+        if (not re.fullmatch(STAR_ID, str(t.get("tic_id", ""))) or t.get("mission") not in ("kepler", "k2", "tess")
+                or not isinstance(t.get("fits_url"), str)):
+            invalid += 1
+            continue
         doc = {
             "tic_id":      str(t["tic_id"]),
             "mission":     t["mission"],
@@ -151,4 +171,4 @@ async def populate_queue(payload: PopulateRequest):
             # Unique index violation — target already exists
             skipped += 1
 
-    return {"inserted": inserted, "skipped": skipped}
+    return {"inserted": inserted, "skipped": skipped, "invalid": invalid}

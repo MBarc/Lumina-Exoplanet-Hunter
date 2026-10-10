@@ -12,12 +12,36 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, Request
 
 from api import database as db
+from api.catalog import classify, t0_bjd_of
+from api.routes.nodes import finder_names, node_name
 from api.schemas import CandidateSubmission, CandidateResponse, ProcessedSubmission
 
 router = APIRouter(prefix="/candidates", tags=["candidates"])
+
+VIEW_FIELDS = ("global_view", "local_view", "odd_view", "even_view", "secondary_view",
+               "transit_view_ppm", "secondary_view_ppm")
+
+
+MAX_CANDIDATES_PER_JOB = 10     # preprocessing returns at most 5 per light curve
+
+
+def _oid(job_id: str) -> ObjectId:
+    try:
+        return ObjectId(job_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid job id.")
+
+
+async def _held_job(job_id: str, node: str, tic_id: str, mission: str) -> dict:
+    """The job, if this node currently holds it for this star; else 409."""
+    job = await db.work_queue().find_one({"_id": _oid(job_id), "status": "assigned", "assigned_to": node,
+                                          "tic_id": tic_id, "mission": mission})
+    if job is None:
+        raise HTTPException(status_code=409, detail="Job not held by this node (unknown, expired or already done).")
+    return job
 
 
 def _serialize(doc: dict) -> dict:
@@ -29,17 +53,33 @@ def _serialize(doc: dict) -> dict:
 
 
 @router.post("", status_code=201)
-async def submit_candidate(payload: CandidateSubmission):
+async def submit_candidate(request: Request, payload: CandidateSubmission):
     """
     Accept a transit candidate from a worker node.
 
     Also increments the global candidates_found counter in network_stats
     so the public dashboard stat stays current without an expensive
     count() query on every page load.
+
+    Results come from machines we don't control, so every submission is
+    stored unverified until it is reproduced centrally.
     """
     now = datetime.now(timezone.utc)
+    node = node_name(request, payload.worker_hostname)
+    job = await _held_job(payload.job_id, node, payload.tic_id, payload.mission)
+    # Per node: a node whose lease expired mid-job must not use up the next holder's quota.
+    # ponytail: count-then-insert can overshoot under parallel posts; bounded, add a $inc counter if it matters.
+    if await db.candidates().count_documents({"job_id": payload.job_id, "worker_hostname": node}) >= MAX_CANDIDATES_PER_JOB:
+        raise HTTPException(status_code=409, detail="Candidate limit for this job reached.")
     doc = payload.model_dump()
+    doc["worker_hostname"] = node
+    doc["sector"] = job.get("sector")          # from the job, not the node
+    doc["fits_url"] = job.get("fits_url")      # what was actually assigned
     doc["reported_at"] = now
+    doc["verified"] = False
+    doc["t0_bjd"] = t0_bjd_of(payload.mission, payload.t0)
+    doc["catalog"] = await classify(payload.mission, payload.tic_id, payload.period_days,
+                                    payload.t0, payload.duration_days, payload.n_transits)
 
     result = await db.candidates().insert_one(doc)
 
@@ -58,6 +98,8 @@ async def list_candidates(
     hostname: str | None = Query(None,  description="Filter to one worker node"),
     limit:    int        = Query(20,    description="Max results", ge=1, le=200),
     min_score: float     = Query(0.0,   description="Minimum ExoNet score filter"),
+    status:   str | None = Query(None, pattern="^(new|unchecked|known_planet|known_candidate|known_false_positive)$",
+                                 description="Catalogue cross-match status, e.g. 'new'"),
 ):
     """
     Return recent candidates, newest first.
@@ -65,21 +107,25 @@ async def list_candidates(
     Pass ?hostname=X to scope to a single contributor's findings (used by
     the personal dashboard). Omit it for the global public view.
     Pass ?min_score=0.5 to filter out low-confidence detections.
+    Pass ?status=new for signals that match nothing in the KOI/TOI/K2 catalogues.
     """
     query: dict = {}
     if hostname:
         query["worker_hostname"] = hostname
     if min_score > 0:
         query["exonet_score"] = {"$gte": min_score}
+    if status:
+        query["catalog.status"] = status
 
     cursor = db.candidates().find(
         query,
         # Exclude large arrays by default — use the /{id} endpoint for those
-        projection={"global_view": 0, "local_view": 0},
+        projection={v: 0 for v in VIEW_FIELDS},
     ).sort("reported_at", -1).limit(limit)
 
     docs = await cursor.to_list(length=limit)
-    return [_serialize(d) for d in docs]
+    names = await finder_names({d["worker_hostname"] for d in docs})
+    return [_serialize(d) | {"finder": names.get(d["worker_hostname"])} for d in docs]
 
 
 @router.get("/history")
@@ -118,11 +164,12 @@ async def get_candidate(candidate_id: str):
     if doc is None:
         raise HTTPException(status_code=404, detail="Candidate not found.")
 
-    return _serialize(doc)
+    names = await finder_names({doc["worker_hostname"]})
+    return _serialize(doc) | {"finder": names.get(doc["worker_hostname"])}
 
 
 @router.post("/processed", status_code=201)
-async def mark_processed(payload: ProcessedSubmission):
+async def mark_processed(request: Request, payload: ProcessedSubmission):
     """
     Record that a worker finished processing a star.
 
@@ -131,33 +178,28 @@ async def mark_processed(payload: ProcessedSubmission):
     Also increments the global stars_analyzed counter.
     """
     now = datetime.now(timezone.utc)
+    payload.worker_hostname = node_name(request, payload.worker_hostname)
+    # Atomic: only the device holding the job can complete it, and only once.
+    # Nothing is logged or counted unless this succeeds.
+    job = await db.work_queue().find_one_and_update(
+        {"_id": _oid(payload.job_id), "status": "assigned", "assigned_to": payload.worker_hostname,
+         "tic_id": payload.tic_id, "mission": payload.mission},
+        {"$set": {"status": "done", "done_at": now}},
+    )
+    if job is None:
+        raise HTTPException(status_code=409, detail="Job not held by this node (unknown, expired or already done).")
+    # Result integrity: completion is still the node's claim; central
+    # re-verification (sampled, incl. negatives) is the next step before any
+    # result is treated as authoritative.
     doc = payload.model_dump()
+    doc["sector"] = job.get("sector")
     doc["processed_at"] = now
+    doc["verified"] = False
 
     await db.processed_log().insert_one(doc)
-
-    # Keep the global counter in sync
     await db.network_stats().update_one(
         {"_id": "global"},
-        {
-            "$inc": {
-                "total_stars_analyzed": 1,
-                "total_compute_seconds": payload.duration_seconds,
-            }
-        },
+        {"$inc": {"total_stars_analyzed": 1, "total_compute_seconds": payload.duration_seconds}},
         upsert=True,
     )
-
-    # Mark the queue job as done
-    await db.work_queue().update_one(
-        {
-            "tic_id":      payload.tic_id,
-            "mission":     payload.mission,
-            "sector":      payload.sector,
-            "assigned_to": payload.worker_hostname,
-            "status":      "assigned",
-        },
-        {"$set": {"status": "done"}},
-    )
-
     return {"status": "ok"}

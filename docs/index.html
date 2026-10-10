@@ -66,6 +66,12 @@
       <div class="panel-title">
         <span class="live-dot"></span>
         <span>RECENT CANDIDATES</span>
+        <span class="filter-tabs">
+          <button class="filter-tab active" data-filter="new" onclick="setCandidateFilter('new')"
+                  title="Signals that match nothing in NASA's KOI, TOI and K2 catalogues">NEW</button>
+          <button class="filter-tab" data-filter="all" onclick="setCandidateFilter('all')"
+                  title="Everything, including rediscovered known planets">ALL</button>
+        </span>
       </div>
       <div id="candidate-list" class="candidate-list">
         <div class="empty-state">AWAITING SIGNAL</div>

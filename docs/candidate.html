@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lumina Candidate</title>
+  <meta name="description" content="A Lumina exoplanet candidate: its numbers, its transit plots, and how to check it against NASA's public data." />
+  <link rel="icon" type="image/x-icon" href="favicon.ico" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body class="detail-page">
+  <header class="header">
+    <div class="header-left">
+      <a class="header-title back-link" href="./">&larr; LUMINA</a>
+      <span class="header-subtitle">CANDIDATE</span>
+    </div>
+  </header>
+
+  <main class="detail">
+    <div id="detail-error" class="empty-state" hidden></div>
+
+    <section class="panel detail-head" id="detail-head" hidden>
+      <div class="detail-title">
+        <h1 id="d-star"></h1>
+        <span id="d-badge" class="badge"></span>
+      </div>
+      <p id="d-sub" class="detail-sub"></p>
+      <p class="detail-note">Unverified until reproduced centrally and checked by a person. A candidate is a
+        possible planet, not a confirmed one.</p>
+    </section>
+
+    <section class="panel" id="plots" hidden>
+      <div class="panel-title">THE TRANSIT</div>
+      <div class="plot-grid">
+        <figure><figcaption>Close-up of the dip (all transits folded together)</figcaption><div id="p-local"></div></figure>
+        <figure><figcaption>Whole orbit, folded at the period</figcaption><div id="p-global"></div></figure>
+        <figure><figcaption>Odd vs even transits (should match for a planet)</figcaption><div id="p-oddeven"></div></figure>
+        <figure><figcaption>Half an orbit later (a dip here suggests two stars)</figcaption><div id="p-secondary"></div></figure>
+      </div>
+      <p class="detail-note">The close-up and the half-orbit-later view are in parts per million on the same scale,
+        so a dip in the second one is as big as it looks. The whole-orbit and odd/even views are normalised for the
+        model: they show shape, not size.</p>
+    </section>
+
+    <section class="panel" id="numbers" hidden>
+      <div class="panel-title">THE NUMBERS</div>
+      <table class="numbers" id="numbers-table"></table>
+    </section>
+
+    <section class="panel" id="reproduce" hidden>
+      <div class="panel-title">CHECK IT YOURSELF</div>
+      <p class="detail-note">Fold NASA's own light curve at this period and time with
+        <a href="https://lightkurve.github.io/lightkurve/" rel="noopener">lightkurve</a>:</p>
+      <pre id="d-code" class="code"></pre>
+      <p id="d-links" class="detail-links"></p>
+    </section>
+  </main>
+
+  <script src="candidate.js"></script>
+</body>
+</html>

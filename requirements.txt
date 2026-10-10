@@ -22,4 +22,4 @@ plotly>=5.20
 
 # ── System / service ─────────────────────────────────────────────────────────
 psutil>=5.9
-pywin32>=306        # Windows service support (win32serviceutil)
+# pywin32>=306     # Windows service support — install manually on Windows; not for Docker/Linux

@@ -61,7 +61,10 @@
  * Base URL for the Lumina REST API.
  * Update this when the API is deployed.
  */
-const API_BASE = "https://lumina-exoplanet-hunter.onrender.com";
+// Local testing (python -m http.server) talks to a local API; the published site to the real one.
+const API_BASE = ["localhost", "127.0.0.1"].includes(location.hostname)
+  ? "http://localhost:18000"
+  : "https://lumina-exoplanet-hunter.onrender.com";
 
 /** How often to poll the API for fresh data (milliseconds). */
 const POLL_INTERVAL_MS = 30_000;
@@ -211,10 +214,24 @@ function renderStats(data) {
   }
 }
 
+// API data comes from volunteer machines (e.g. finder display names):
+// escape everything before it touches HTML.
+const esc = v => String(v ?? "").replace(/[&<>"']/g, ch =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+const STAR_PREFIX = { kepler: "KIC", k2: "EPIC", tess: "TIC" };
+const CATALOG_BADGE = {
+  new: ["NEW", "badge-new"],
+  known_planet: ["KNOWN PLANET", "badge-known"],
+  unchecked: ["NOT YET CHECKED", "badge-known"],
+  known_candidate: ["KNOWN CANDIDATE", "badge-known"],
+  known_false_positive: ["KNOWN FALSE POSITIVE", "badge-fp"],
+};
+let candidateFilter = "new";   // "new" (catalogue cross-match) or "all"
+
 function renderCandidates(list) {
   const el = document.getElementById("candidate-list");
   if (!list || list.length === 0) {
-    el.innerHTML = `<div class="empty-state">NO CANDIDATES YET</div>`;
+    el.innerHTML = `<div class="empty-state">${candidateFilter === "new" ? "NO NEW CANDIDATES YET" : "NO CANDIDATES YET"}</div>`;
     return;
   }
 
@@ -223,20 +240,31 @@ function renderCandidates(list) {
     const pct      = (score * 100).toFixed(1);
     const strong   = score >= 0.8 ? "strong" : "";
     const scoreClass = score >= 0.8 ? "score-high" : score >= 0.5 ? "score-mid" : "score-low";
-    const period   = c.period_days  ? `${c.period_days.toFixed(3)}d`  : "—";
-    const depth    = c.depth_ppm    ? `${Math.round(c.depth_ppm)}ppm` : "—";
+    const period   = Number.isFinite(c.period_days) ? `${c.period_days.toFixed(3)}d` : "—";
+    const depth    = Number.isFinite(c.depth_ppm)   ? `${Math.round(c.depth_ppm)}ppm` : "—";
     const reported = c.reported_at  ? new Date(c.reported_at).toISOString().slice(0, 16).replace("T", " ") : "—";
+    const star     = `${STAR_PREFIX[(c.mission || "").toLowerCase()] || "STAR"} ${parseInt(c.tic_id, 10) || "?"}`;
+    const cat      = c.catalog || { status: "unchecked" };
+    let [label, cls] = CATALOG_BADGE[cat.status] || CATALOG_BADGE.unchecked;
+    if (cat.status === "new" && cat.known_star) label = "NEW ON KNOWN STAR";
+    if (cat.name) label += cat.alias ? ` · alias of ${cat.name}` : ` · ${cat.name}`;
 
     return `
-      <div class="candidate-row ${strong}">
-        <div class="candidate-tic">TIC ${c.tic_id}</div>
+      <a class="candidate-row ${strong}" href="candidate.html?id=${encodeURIComponent(c.id)}">
+        <div class="candidate-tic">${esc(star)} <span class="badge ${cls}">${esc(label)}</span></div>
         <div class="candidate-meta">
-          SECTOR ${c.sector || "?"}  ·  P=${period}  ·  D=${depth}
+          ${esc((c.mission || "").toUpperCase())}  ·  P=${period}  ·  D=${depth}
         </div>
         <div class="candidate-score ${scoreClass}">${pct}%</div>
-        <div class="candidate-node">${c.worker_node || "—"}<br>${reported}</div>
-      </div>`;
+        <div class="candidate-node">${esc(c.finder || c.worker_hostname || "—")}<br>${reported}</div>
+      </a>`;
   }).join("");
+}
+
+function setCandidateFilter(f) {
+  candidateFilter = f;
+  for (const b of document.querySelectorAll(".filter-tab")) b.classList.toggle("active", b.dataset.filter === f);
+  refresh();
 }
 
 function renderLeaderboard(list) {
@@ -325,7 +353,7 @@ async function refresh() {
     // Fire all four requests in parallel
     const [stats, candidates, leaderboard, activity] = await Promise.all([
       fetchJSON("/stats"),
-      fetchJSON("/candidates?limit=10"),
+      fetchJSON(candidateFilter === "new" ? "/candidates?limit=10&status=new" : "/candidates?limit=10"),
       fetchJSON("/stats/leaderboard?limit=10"),
       fetchJSON("/stats/activity?hours=24"),
     ]);
