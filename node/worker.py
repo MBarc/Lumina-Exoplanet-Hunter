@@ -55,7 +55,7 @@ class Worker:
         self.stop = stop
         self.api = Api(cfg["api_url"], cfg["device_token"])
         self.mast = requests.Session()   # separate: never send the device token to MAST
-        self.host = socket.gethostname()
+        self.host = socket.gethostname()[:64]   # API caps hostnames at 64
         self.model = ExoNetInference(cfg["model_path"])
         # Fingerprint graph + external weights (newer exports split them), so
         # different weights never look like the same model.

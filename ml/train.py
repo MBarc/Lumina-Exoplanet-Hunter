@@ -2814,6 +2814,7 @@ def _train_fold(
                 # replacement means some samples are never seen in a given epoch,
                 # producing a systematically biased SWA average on small datasets.
                 _run_epoch(model, bn_loader, criterion, swa_opt, device,
+                           grad_accum_steps=args.grad_accum_steps, max_grad_norm=args.max_grad_norm,
                            simple_loss=getattr(args, "simple_loss", False))  # 4th return unused
                 swa_model.update_parameters(model)
                 swa_sched.step()

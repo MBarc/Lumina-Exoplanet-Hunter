@@ -46,6 +46,7 @@ VERSION = "0.1.0"
 SERVICE = "lumina-node"            # systemd unit (Linux)
 TASK = "Lumina Node"               # scheduled task (Windows)
 WIN_ACCOUNT = r"NT AUTHORITY\LOCALSERVICE"
+WIN_SID = "*S-1-5-19"            # LocalService for icacls; names are localized on some Windows
 ARP_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Lumina"
 LOG = Path(tempfile.gettempdir()) / "lumina-install.log"
 
@@ -299,8 +300,8 @@ def lock_down(args, cfg_path: Path) -> None:
     cfg_dir = cfg_path.parent
     if WINDOWS:
         for d in {args.data_dir, args.log_dir}:   # a custom --log-dir needs its own grant
-            run(["icacls", str(d), "/grant", f"{WIN_ACCOUNT}:(OI)(CI)M", "/Q"])
-        run(["icacls", str(cfg_dir), "/inheritance:r", "/grant:r", f"{WIN_ACCOUNT}:(OI)(CI)R",
+            run(["icacls", str(d), "/grant", f"{WIN_SID}:(OI)(CI)M", "/Q"])
+        run(["icacls", str(cfg_dir), "/inheritance:r", "/grant:r", f"{WIN_SID}:(OI)(CI)R",
              "*S-1-5-32-544:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F", "/Q"])
         if cfg_path.exists():   # an older config: drop its own ACL, inherit the locked one
             run(["icacls", str(cfg_path), "/reset", "/Q"])
@@ -365,11 +366,13 @@ WantedBy=multi-user.target
 def uninstall_command(args, quiet: bool = False) -> tuple[str, str]:
     """(program, arguments) that run the installed copy of this installer with --uninstall."""
     # Custom locations must travel with the command, or uninstall removes the defaults.
-    extra = (f' --install-dir "{args.install_dir}" --data-dir "{args.data_dir}" --log-dir "{args.log_dir}"'
-             + (" --quiet" if quiet else ""))
+    # list2cmdline gets Windows quoting right, e.g. a path ending in a backslash.
+    argv = ["--uninstall", "--install-dir", str(args.install_dir), "--data-dir", str(args.data_dir),
+            "--log-dir", str(args.log_dir)] + (["--quiet"] if quiet else [])
     if FROZEN:
-        return str(args.install_dir / "LuminaSetup.exe"), f"--uninstall{extra}"
-    return str(args.install_dir / "python" / "python.exe"), f'"{args.install_dir / "lumina_install.py"}" --uninstall{extra}'
+        return str(args.install_dir / "LuminaSetup.exe"), subprocess.list2cmdline(argv)
+    return (str(args.install_dir / "python" / "python.exe"),
+            subprocess.list2cmdline([str(args.install_dir / "lumina_install.py"), *argv]))
 
 
 def add_shortcuts(args) -> None:
@@ -421,7 +424,30 @@ def stop_service() -> None:
         subprocess.run(["systemctl", "stop", SERVICE], capture_output=True)
 
 
+MARKER = ".lumina-created"
+
+
+def ours(d: Path) -> bool:
+    """Lumina's own folder: created by the installer, or named for Lumina (the
+    defaults incl. <data>/logs, and installs from before the marker existed)."""
+    return (d / MARKER).exists() or "lumina" in d.name.lower() or "lumina" in d.parent.name.lower()
+
+
+def claim_dirs(args) -> None:
+    # Install chowns / re-ACLs these recursively and uninstall deletes them, so
+    # a shared folder like D:\Data must never be one of them.
+    for d in (args.install_dir, args.data_dir, args.log_dir):
+        if not d.exists():
+            d.mkdir(parents=True)
+            (d / MARKER).touch()
+        elif not ours(d):
+            fail(f"{d} already exists and isn't a Lumina folder; pick a new folder (it will be created)")
+
+
 def remove_tree(path: Path) -> None:
+    if not ours(path):
+        say(f"WARNING: {path} isn't a Lumina folder; left in place")
+        return
     shutil.rmtree(path, ignore_errors=True)
     if path.exists() and WINDOWS:
         # Our own exe / interpreter lives here and is locked while we run:
@@ -479,6 +505,7 @@ def check_python(args) -> None:
 def install(args) -> str:
     cfg_path = args.data_dir / "config" / "config.json"
     check_python(args)
+    claim_dirs(args)
     stop_service()   # upgrade in place: release file locks before copying
     copy_program(args)
     py = build_runtime(args)

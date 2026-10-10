@@ -8,6 +8,7 @@ POST /queue/populate    — admin/cron adds new targets to the queue
 
 from __future__ import annotations
 import asyncio
+import re
 from datetime import datetime, timezone, timedelta
 
 from bson import ObjectId
@@ -16,7 +17,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from api import database as db
 from api.config import get_settings
 from api.routes.nodes import node_name
-from api.schemas import QueueItem, PopulateRequest, QueueStatus
+from api.schemas import QueueItem, PopulateRequest, QueueStatus, STAR_ID
 
 router = APIRouter(prefix="/queue", tags=["queue"])
 
@@ -144,8 +145,14 @@ async def populate_queue(payload: PopulateRequest):
     now = datetime.now(timezone.utc)
     inserted = 0
     skipped  = 0
+    invalid  = 0
 
     for t in payload.targets:
+        # Reject here what /candidates/processed would 422 later, or the job loops forever.
+        if (not re.fullmatch(STAR_ID, str(t.get("tic_id", ""))) or t.get("mission") not in ("kepler", "k2", "tess")
+                or not isinstance(t.get("fits_url"), str)):
+            invalid += 1
+            continue
         doc = {
             "tic_id":      str(t["tic_id"]),
             "mission":     t["mission"],
@@ -164,4 +171,4 @@ async def populate_queue(payload: PopulateRequest):
             # Unique index violation — target already exists
             skipped += 1
 
-    return {"inserted": inserted, "skipped": skipped}
+    return {"inserted": inserted, "skipped": skipped, "invalid": invalid}

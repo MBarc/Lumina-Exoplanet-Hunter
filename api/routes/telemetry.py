@@ -38,4 +38,10 @@ async def heartbeat(request: Request, payload: HeartbeatRequest):
         {"$set": doc},
         upsert=True,
     )
+    # A live node keeps its batch: each heartbeat renews the leases it holds, so
+    # only nodes that stop heartbeating have jobs requeued.
+    await db.work_queue().update_many(
+        {"status": "assigned", "assigned_to": payload.hostname},
+        {"$set": {"assigned_at": doc["reported_at"]}},
+    )
     return {"status": "ok"}

@@ -67,7 +67,9 @@ async def submit_candidate(request: Request, payload: CandidateSubmission):
     now = datetime.now(timezone.utc)
     node = node_name(request, payload.worker_hostname)
     job = await _held_job(payload.job_id, node, payload.tic_id, payload.mission)
-    if await db.candidates().count_documents({"job_id": payload.job_id}) >= MAX_CANDIDATES_PER_JOB:
+    # Per node: a node whose lease expired mid-job must not use up the next holder's quota.
+    # ponytail: count-then-insert can overshoot under parallel posts; bounded, add a $inc counter if it matters.
+    if await db.candidates().count_documents({"job_id": payload.job_id, "worker_hostname": node}) >= MAX_CANDIDATES_PER_JOB:
         raise HTTPException(status_code=409, detail="Candidate limit for this job reached.")
     doc = payload.model_dump()
     doc["worker_hostname"] = node
