@@ -283,24 +283,34 @@ def write_config(args, cfg_path: Path, identity: dict) -> None:
     }
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     args.log_dir.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
-    lock_down(args, cfg_path)
+    lock_down(args, cfg_path)   # before the token touches disk
+    fd = os.open(cfg_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(cfg, indent=2))
+    if not WINDOWS:
+        os.chmod(cfg_path, 0o600)   # an older file keeps its mode through O_CREAT
+        run(["chown", f"{args.service_user}:", str(cfg_path)])
     say(f"Config written to {cfg_path}")
 
 
 def lock_down(args, cfg_path: Path) -> None:
-    """The device token is a credential: only the service account and admins may read it."""
+    """The device token is a credential: only the service account and admins may read
+    its directory, and that is in place before the token is written."""
+    cfg_dir = cfg_path.parent
     if WINDOWS:
-        run(["icacls", str(args.data_dir), "/grant", f"{WIN_ACCOUNT}:(OI)(CI)M", "/T", "/Q"])
-        run(["icacls", str(cfg_path), "/inheritance:r", "/grant:r",
-             f"{WIN_ACCOUNT}:R", "*S-1-5-32-544:F", "*S-1-5-18:F", "/Q"])
+        for d in {args.data_dir, args.log_dir}:   # a custom --log-dir needs its own grant
+            run(["icacls", str(d), "/grant", f"{WIN_ACCOUNT}:(OI)(CI)M", "/Q"])
+        run(["icacls", str(cfg_dir), "/inheritance:r", "/grant:r", f"{WIN_ACCOUNT}:(OI)(CI)R",
+             "*S-1-5-32-544:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F", "/Q"])
+        if cfg_path.exists():   # an older config: drop its own ACL, inherit the locked one
+            run(["icacls", str(cfg_path), "/reset", "/Q"])
         return
     if subprocess.run(["id", "-u", args.service_user], capture_output=True).returncode != 0:
         nologin = "/usr/sbin/nologin" if Path("/usr/sbin/nologin").exists() else "/bin/false"
         run(["useradd", "--system", "--no-create-home", "--shell", nologin, args.service_user])
+    os.chmod(cfg_dir, 0o700)
     for d in {args.data_dir, args.log_dir}:
         run(["chown", "-R", f"{args.service_user}:", str(d)])
-    os.chmod(cfg_path, 0o600)
 
 
 def register_service(args, py: Path, cfg_path: Path) -> None:
@@ -354,7 +364,9 @@ WantedBy=multi-user.target
 
 def uninstall_command(args, quiet: bool = False) -> tuple[str, str]:
     """(program, arguments) that run the installed copy of this installer with --uninstall."""
-    extra = " --quiet" if quiet else ""
+    # Custom locations must travel with the command, or uninstall removes the defaults.
+    extra = (f' --install-dir "{args.install_dir}" --data-dir "{args.data_dir}" --log-dir "{args.log_dir}"'
+             + (" --quiet" if quiet else ""))
     if FROZEN:
         return str(args.install_dir / "LuminaSetup.exe"), f"--uninstall{extra}"
     return str(args.install_dir / "python" / "python.exe"), f'"{args.install_dir / "lumina_install.py"}" --uninstall{extra}'
@@ -450,8 +462,23 @@ def uninstall(args) -> None:
 
 # ── orchestration ────────────────────────────────────────────────────────────
 
+def check_python(args) -> None:
+    """Linux: the venv interpreter must be usable before we stop a working node."""
+    if WINDOWS:
+        return   # bundled runtime
+    probe = "import sys, venv, ensurepip; sys.exit(sys.version_info < (3, 12))"
+    try:
+        ok = subprocess.run([args.python, "-c", probe], capture_output=True).returncode == 0
+    except OSError:
+        ok = False
+    if not ok:
+        fail(f"{args.python} must be Python 3.12+ with venv and ensurepip "
+             "(Debian/Ubuntu: apt install python3-venv); pick another with --python")
+
+
 def install(args) -> str:
     cfg_path = args.data_dir / "config" / "config.json"
+    check_python(args)
     stop_service()   # upgrade in place: release file locks before copying
     copy_program(args)
     py = build_runtime(args)
