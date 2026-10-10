@@ -28,6 +28,13 @@ for name, kw, status, alias in cases:
         assert got["known_star"], name
     print(f"ok  {name:<48} -> {got['status']}{' (alias)' if got['alias'] else ''}")
 
+# Astra's case: transits coincide once, then drift (20.18 d vs 2 x 10 d).
+p10 = [{"name": "Known-10d b", "status": "known_planet", "period": 10.0, "t0_bjd": T0, "duration_days": 0.2}]
+drift = label(p10, 20.18, T0, 0.2, n_transits=40)
+assert drift["status"] == "new", f"drifting 2:1 neighbour must stay new: {drift}"
+assert label(p10, 20.0, T0 + 30 * 20.0, 0.2, n_transits=40)["status"] == "known_planet"
+print("ok  drifting near-2:1 neighbour stays new; exact 2x alias is known")
+
 fp_and_planet = k13 + [{"name": "KOI-13.02", "status": "known_false_positive", "period": P,
                         "t0_bjd": T0, "duration_days": DUR}]
 assert label(fp_and_planet, P, T0, DUR)["status"] == "known_planet", "planet must outrank FP"

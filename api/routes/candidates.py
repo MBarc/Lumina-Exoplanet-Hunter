@@ -52,7 +52,7 @@ async def submit_candidate(request: Request, payload: CandidateSubmission):
     doc["verified"] = False
     doc["t0_bjd"] = t0_bjd_of(payload.mission, payload.t0)
     doc["catalog"] = await classify(payload.mission, payload.tic_id, payload.period_days,
-                                    payload.t0, payload.duration_days)
+                                    payload.t0, payload.duration_days, payload.n_transits)
 
     result = await db.candidates().insert_one(doc)
 

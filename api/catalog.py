@@ -58,24 +58,38 @@ def _epoch_ok(t0: float | None, duration: float | None, obj: dict, step: float) 
     return off <= max(1.5 * dur, 0.1)
 
 
-def label(objs: list[dict], period: float, t0_bjd: float | None, duration: float | None) -> dict:
+def _stays_aligned(period: float, cat_period: float, mult: float, duration: float | None,
+                   n_transits: float | None, obj: dict) -> bool:
+    """Two transit trains that line up once can still drift apart: over the
+    candidate's observed transits the accumulated period mismatch must stay
+    within the timing tolerance. Unknown transit count -> assume 20 (strict)."""
+    n = n_transits if n_transits and n_transits > 0 else 20
+    drift = n * abs(period - cat_period * mult)
+    dur = max(duration or 0.0, obj.get("duration_days") or 0.0)
+    return drift <= max(1.5 * dur, 0.1)
+
+
+def label(objs: list[dict], period: float, t0_bjd: float | None, duration: float | None,
+          n_transits: float | None = None) -> dict:
     """Pure cross-match of one signal against one star's catalogued objects."""
     best = None
     for o in objs:
         p = o.get("period")
         if not p:
             continue
-        if _close(period, p):
-            ok, alias = _epoch_ok(t0_bjd, duration, o, min(period, p)), False
-            # Same period with clearly different transit times = a different
+        mult = next((h for h in (1.0, *HARMONICS) if _close(period, p * h)), None)
+        if mult is None:
+            continue
+        alias = mult != 1.0
+        ok = _epoch_ok(t0_bjd, duration, o, min(period, p))
+        if alias:
+            # A harmonic is the known object only if the transit times line up
+            # AND stay lined up across the observed span.
+            if not ok or not _stays_aligned(period, p, mult, duration, n_transits, o):
+                continue
+        elif ok is False or (ok and not _stays_aligned(period, p, 1.0, duration, n_transits, o)):
+            # Same period but different or drifting transit times = a different
             # planet in the system; unknown epoch = trust the period.
-            if ok is False:
-                continue
-        elif any(_close(period, p * h) for h in HARMONICS):
-            ok, alias = _epoch_ok(t0_bjd, duration, o, min(period, p)), True
-            if not ok:          # harmonic without matching transit times is NOT the known object
-                continue
-        else:
             continue
         key = (_RANK[o["status"]], alias)
         if best is None or key < best[0]:
@@ -92,11 +106,12 @@ def t0_bjd_of(mission: str, t0: float | None) -> float | None:
     return t0 + off if t0 is not None and off is not None else None
 
 
-async def classify(mission: str, star: str, period: float, t0: float | None, duration: float | None) -> dict:
+async def classify(mission: str, star: str, period: float, t0: float | None, duration: float | None,
+                   n_transits: float | None = None) -> dict:
     if await db.known_objects().estimated_document_count() == 0:
         return {"status": "unchecked", "known_star": False, "alias": False, "name": None, "catalog_period": None}
     objs = await db.known_objects().find({"star": star_key(mission, star)}, {"_id": 0}).to_list(length=500)
-    return label(objs, period, t0_bjd_of(mission, t0), duration)
+    return label(objs, period, t0_bjd_of(mission, t0), duration, n_transits)
 
 
 async def relabel_all() -> int:
@@ -107,9 +122,9 @@ async def relabel_all() -> int:
         by_star.setdefault(o["star"], []).append(o)
     ops = []
     async for c in db.candidates().find({}, {"mission": 1, "tic_id": 1, "period_days": 1,
-                                             "t0": 1, "duration_days": 1, "catalog": 1}):
+                                             "t0": 1, "duration_days": 1, "n_transits": 1, "catalog": 1}):
         new = label(by_star.get(star_key(c["mission"], c["tic_id"]), []), c["period_days"],
-                    t0_bjd_of(c["mission"], c.get("t0")), c.get("duration_days"))
+                    t0_bjd_of(c["mission"], c.get("t0")), c.get("duration_days"), c.get("n_transits"))
         if new != c.get("catalog"):
             ops.append(UpdateOne({"_id": c["_id"]}, {"$set": {"catalog": new}}))
     if ops:
