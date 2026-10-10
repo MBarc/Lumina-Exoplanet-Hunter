@@ -138,6 +138,9 @@ async def populate_queue(payload: PopulateRequest):
     Duplicates (same tic_id + mission + sector) are silently skipped via
     the unique compound index — safe to call repeatedly with the same list.
     """
+    # ponytail: one job = one light-curve file. Shallow planets need a star's
+    # quarters/sectors stitched (the injection test did), so per-star jobs are the
+    # upgrade once the queue carries all of a star's files (Astra #12, open).
     now = datetime.now(timezone.utc)
     inserted = 0
     skipped  = 0
