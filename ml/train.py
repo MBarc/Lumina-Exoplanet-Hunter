@@ -2403,7 +2403,9 @@ def _train_fold(
         sampler=sampler,          # balanced batches via WeightedRandomSampler
         num_workers=args.num_workers,
         pin_memory=False,
-        drop_last=False,
+        # A final batch of 1 crashes BatchNorm in train mode (fold 4 of the joint
+        # run had 123,969 = 64*1937 + 1 samples and crash-looped every epoch).
+        drop_last=True,
         worker_init_fn=_fold_worker_init,
     )
     val_loader = DataLoader(
@@ -2425,7 +2427,7 @@ def _train_fold(
         sampler=_make_sampler(train_labels),
         num_workers=args.num_workers,
         pin_memory=False,
-        drop_last=False,
+        drop_last=True,           # train mode: same BatchNorm batch-of-1 hazard
         worker_init_fn=_fold_worker_init,
     )
 
@@ -2780,6 +2782,7 @@ def _train_fold(
             shuffle=False,
             num_workers=args.num_workers,
             pin_memory=False,
+            drop_last=True,       # BatchNorm statistics update runs in train mode
             worker_init_fn=_fold_worker_init,
         )
 
